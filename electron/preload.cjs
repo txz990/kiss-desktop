@@ -1,0 +1,37 @@
+// 预加载脚本：通过 contextBridge 把受限的 IPC 能力暴露给渲染进程（window.desktop）。
+// 不直接暴露 node/electron 模块，保持 contextIsolation 安全边界。
+//
+// ⚠️ 为什么这个文件必须是 .cjs、且不能写 `import`：
+//  1) Electron 的 preload **会忽略 package.json 的 "type": "module"**，.js 一律按 CommonJS 解析。
+//     之前写成 `import ... from "electron"` → 语法错误 → preload 整个加载失败
+//     → 渲染进程里 window.desktop 为 undefined → React 首屏就抛错 → 白屏。
+//  2) 沙箱化 preload 的 require 是**受限 polyfill**，只允许 electron / events / timers / url，
+//     **不能 require 相对路径文件**，所以这里的通道名无法从 ipc.js 复用，只能内联。
+//
+// 👉 约定：改动 IPC 通道名时，必须同步 electron/ipc.js 与本文件（两处保持一致）。
+const { contextBridge, ipcRenderer } = require("electron");
+
+// 与 electron/ipc.js 的 IPC 常量保持一致
+const IPC = {
+  GET_CONFIG: "get-config",
+  SAVE_CONFIG: "save-config",
+  TRANSLATE: "translate",
+  TRANSLATION: "translation",
+  OPEN_SETTINGS: "open-settings",
+  COPY_TO_TRANSLATE: "copy-to-translate",
+};
+
+contextBridge.exposeInMainWorld("desktop", {
+  getConfig: () => ipcRenderer.invoke(IPC.GET_CONFIG),
+  saveConfig: (cfg) => ipcRenderer.invoke(IPC.SAVE_CONFIG, cfg),
+  translate: (text, engine) => ipcRenderer.invoke(IPC.TRANSLATE, text, engine),
+  openSettings: () => ipcRenderer.send(IPC.OPEN_SETTINGS),
+  // 返回「取消订阅」函数，供 React useEffect 卸载时清理。
+  // （若直接返回 ipcRenderer.on 的返回值，调用方拿到的是 ipcRenderer 对象而非函数，
+  //   卸载时执行 off() 会抛 TypeError。）
+  onTranslation: (cb) => {
+    const listener = (_e, payload) => cb(payload);
+    ipcRenderer.on(IPC.TRANSLATION, listener);
+    return () => ipcRenderer.removeListener(IPC.TRANSLATION, listener);
+  },
+});

@@ -11,15 +11,20 @@ import {
   Divider,
 } from "@mui/material";
 
-// 设置页：配置自定义 API（OpenAI 兼容端点）、热键、复制即翻译。
+// 设置页：配置自定义 API（OpenAI 兼容端点）、复制即翻译开关、在线测试。
+//
+// ⚠️ 字段名必须与引擎一致：引擎读的是 reqHook / resHook（不是 requestHook / responseHook）。
+// ⚠️ 不要在这里硬写 apiType：引擎侧的值是 "Custom"（OPT_TRANS_CUSTOMIZE 的值），
+//    而字符串 "OPT_TRANS_CUSTOMIZE" 是无效的，会让 genReqFuncs[apiType] 查不到而抛错。
+//    apiType / apiSlug 等引擎内部字段由 electron/store.js 的默认值兜底，UI 不需要也不该覆盖。
 export default function Settings() {
   const [engine, setEngine] = useState({
     url: "http://localhost:17377/v1/chat/completions",
     key: "",
     model: "gpt-5.5",
     useStream: false,
-    requestHook: "",
-    responseHook: "",
+    reqHook: "",
+    resHook: "",
   });
   const [copyToTranslate, setCopyToTranslate] = useState(false);
   const [testText, setTestText] = useState("Hello world");
@@ -29,13 +34,14 @@ export default function Settings() {
 
   useEffect(() => {
     window.desktop.getConfig().then((cfg) => {
+      const e = cfg.engine || {};
       setEngine({
-        url: cfg.engine.url,
-        key: cfg.engine.key || "",
-        model: cfg.engine.model,
-        useStream: !!cfg.engine.useStream,
-        requestHook: cfg.engine.requestHook || "",
-        responseHook: cfg.engine.responseHook || "",
+        url: e.url || "",
+        key: e.key || "",
+        model: e.model || "",
+        useStream: !!e.useStream,
+        reqHook: e.reqHook || "",
+        resHook: e.resHook || "",
       });
       setCopyToTranslate(!!cfg.copyToTranslate);
     });
@@ -45,20 +51,9 @@ export default function Settings() {
 
   const save = async () => {
     setSaved(false);
-    await window.desktop.saveConfig({
-      engine: {
-        ...engine,
-        apiType: "OPT_TRANS_CUSTOMIZE",
-        apiSlug: "desktop-default",
-        useBatchFetch: false,
-        contextSize: 0,
-        useContext: false,
-        fetchInterval: 0,
-        fetchLimit: 0,
-        httpTimeout: 30000,
-      },
-      copyToTranslate,
-    });
+    // 只提交本页负责的字段；引擎内部字段（apiType/apiSlug/httpTimeout 等）
+    // 交给 store.js 与 DEFAULT_ENGINE_CONFIG 兜底合并，避免覆盖成错误值。
+    await window.desktop.saveConfig({ engine, copyToTranslate });
     setSaved(true);
   };
 
@@ -66,7 +61,8 @@ export default function Settings() {
     setTestResult("");
     setTestErr("");
     try {
-      const res = await window.desktop.translate(testText);
+      // 用当前表单里的配置测试（而非已保存的旧配置），所见即所得。
+      const res = await window.desktop.translate(testText, engine);
       setTestResult(res.text);
     } catch (e) {
       setTestErr(e?.message || String(e));
@@ -95,8 +91,8 @@ export default function Settings() {
           />
           <TextField
             label="Request Hook（JS）"
-            value={engine.requestHook}
-            onChange={update("requestHook")}
+            value={engine.reqHook}
+            onChange={update("reqHook")}
             fullWidth
             size="small"
             multiline
@@ -104,8 +100,8 @@ export default function Settings() {
           />
           <TextField
             label="Response Hook（JS）"
-            value={engine.responseHook}
-            onChange={update("responseHook")}
+            value={engine.resHook}
+            onChange={update("resHook")}
             fullWidth
             size="small"
             multiline

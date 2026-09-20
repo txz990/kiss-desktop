@@ -61,13 +61,20 @@ function createFloatWindow() {
     resizable: true,
     show: false,
     webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
+      // 注意：必须是 .cjs（沙箱化 preload 不能写 import，见 preload.cjs 顶部说明）
+      preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
   });
   loadRenderer(floatWin, "floating");
   floatWin.on("blur", () => floatWin.hide());
+  // 浮窗被关闭（点 X / window.close）后置空引用，下次取词会自动重建，
+  // 否则后续对已销毁窗口调用 getBounds()/show() 会抛错。
+  floatWin.on("closed", () => {
+    floatWin = null;
+  });
 }
 
 function createSettingsWindow() {
@@ -79,12 +86,17 @@ function createSettingsWindow() {
     frame: true,
     show: false,
     webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
+      // 注意：必须是 .cjs（沙箱化 preload 不能写 import，见 preload.cjs 顶部说明）
+      preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
   });
   loadRenderer(settingsWin, "settings");
+  settingsWin.on("closed", () => {
+    settingsWin = null;
+  });
 }
 
 function createTray() {
@@ -164,20 +176,34 @@ function registerIpc() {
     const next = saveConfig(cfg);
     return next;
   });
-  ipcMain.handle(IPC.TRANSLATE, async (_e, text) => {
-    const res = await translate(text, { apiSetting: getConfig().engine });
-    return res;
+  // engineOverride 让设置页用「当前表单值」直接测试，而不必先保存。
+  ipcMain.handle(IPC.TRANSLATE, async (_e, text, engineOverride) => {
+    const base = getConfig().engine;
+    const apiSetting = engineOverride ? { ...base, ...engineOverride } : base;
+    return await translate(text, { apiSetting });
   });
   ipcMain.on(IPC.OPEN_SETTINGS, () => openSettings());
 }
 
 app.whenReady().then(() => {
+  // 托盘驱动的后台翻译工具，不需要 Electron 默认菜单栏（File/Edit/View/Window）。
+  Menu.setApplicationMenu(null);
+
   createFloatWindow();
   createSettingsWindow();
   createTray();
   registerIpc();
   startCapture(onCaptured);
   startClipboardWatch();
+});
+
+// 菜单已移除，保留 F12 作为开发者工具的唯一入口，便于排查问题。
+app.on("browser-window-created", (_e, win) => {
+  win.webContents.on("before-input-event", (_ev, input) => {
+    if (input.type === "keyDown" && input.key === "F12") {
+      win.webContents.toggleDevTools();
+    }
+  });
 });
 
 app.on("window-all-closed", (e) => {
