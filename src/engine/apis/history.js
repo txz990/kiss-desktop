@@ -1,4 +1,4 @@
-import { DEFAULT_CONTEXT_SIZE } from "../config";
+import { DEFAULT_CONTEXT_SIZE } from "../config/index.js";
 
 // 全局缓存各 AI 翻译平台实例的对话上下文历史
 const historyMap = new Map();

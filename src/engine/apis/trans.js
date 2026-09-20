@@ -60,22 +60,22 @@ import {
   normalizeGeminiModelName,
   normalizeThinkingSettings,
   BUILTIN_STONES,
-} from "../config";
-import { genDeeplFree } from "./deepl";
-import { genBaidu } from "./baidu";
-import { interpreter } from "../libs/interpreter";
+} from "../config/index.js";
+import { genDeeplFree } from "./deepl.js";
+import { genBaidu } from "./baidu.js";
+import { interpreter } from "../libs/interpreter.js";
 import {
   parseJsonObj,
   extractJson,
   stripMarkdownCodeBlock,
   parseAITerms,
-} from "../libs/utils";
+} from "../libs/utils.js";
 import {
   decodeHTMLEntities,
   decodeHTMLTranslationText,
   encodeHTMLTranslationText,
-} from "../libs/html";
-import { parseCompleteTranslationSegments } from "../libs/aiResponseParser";
+} from "../libs/html.js";
+import { parseCompleteTranslationSegments } from "../libs/aiResponseParser.js";
 import {
   parseStreamingSegments,
   createStreamingJsonParser,
@@ -83,18 +83,18 @@ import {
   createRealtimeStreamParser,
   detectStreamFormat,
   getStreamDelta,
-} from "../libs/stream";
-import { createSubtitleIndexAligner } from "../libs/subtitleIndexAlign";
-import { kissLog } from "../libs/log";
-import { fetchData, fetchStream } from "../libs/fetch";
-import { getMsgHistory } from "./history";
-import { getOpenCodeSessionId } from "./opencode";
-import { parseBilingualVtt } from "../subtitle/vtt";
-import { getDocInfo } from "../libs/docInfo";
+} from "../libs/stream.js";
+import { createSubtitleIndexAligner } from "../libs/subtitleIndexAlign.js";
+import { kissLog } from "../libs/log.js";
+import { fetchData, fetchStream } from "../libs/fetch.js";
+import { getMsgHistory } from "./history.js";
+import { getOpenCodeSessionId } from "./opencode.js";
+import { parseBilingualVtt } from "../subtitle/vtt.js";
+import { getDocInfo } from "../libs/docInfo.js";
 import {
   isLegacyIndexSubtitleItem,
   mapBoundaryItemToCue,
-} from "../subtitle/subtitleBoundaryProtocol";
+} from "../subtitle/subtitleBoundaryProtocol.js";
 
 const keyMap = new Map();
 const urlMap = new Map();

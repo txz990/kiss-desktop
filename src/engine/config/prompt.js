@@ -14,7 +14,7 @@ import {
   API_SPE_TYPES,
   GEMINI_GENERATE_CONTENT_URL,
   OPT_TRANS_GEMINI,
-} from "./api";
+} from "./api.js";
 
 // 定义各类预设提示词的唯一标识符 (Slug)
 export const PROMPT_SLUG_NOBATCH_TRANSLATION = "nobatch-translation";

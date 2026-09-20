@@ -2,7 +2,7 @@
 // cache / request / requestStream / webextension-polyfill 整套耦合链。
 // 契约与原 fetch.js 保持一致：fetchData 返回解析后的响应；fetchStream 逐条 yield SSE data 字段。
 
-import { createSSEParser } from "./stream";
+import { createSSEParser } from "./stream.js";
 
 /**
  * 发起普通网络请求，返回解析后的响应数据。

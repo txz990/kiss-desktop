@@ -1,4 +1,4 @@
-import { DEFAULT_USER_AGENT } from "../config";
+import { DEFAULT_USER_AGENT } from "../config/index.js";
 
 /**
  * 构造百度翻译私有接口的请求载荷。

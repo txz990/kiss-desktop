@@ -2,8 +2,8 @@
 // 原 browser 版 src/config/index.js 还会 re-export storage.js / rules.js（带浏览器耦合），
 // 桌面端不创建那些模块，避免污染依赖闭包。
 
-export * from "./api";
-export * from "./prompt";
+export * from "./api.js";
+export * from "./prompt.js";
 
 // 原 client.js 定义的默认 User-Agent，桌面端直接内联，避免引入 client.js 的循环依赖。
 export const DEFAULT_USER_AGENT =

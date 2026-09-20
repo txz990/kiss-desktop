@@ -20,17 +20,17 @@ import {
   OPT_TRANS_OLLAMA,
   OPT_TRANS_CLAUDE,
   OPT_TRANS_EPHONEAI,
-} from "../config";
+} from "../config/index.js";
 import {
   normalizeTranslationItem,
   parseLineTranslationSegments,
   parseXmlTranslationSegments,
-} from "./aiResponseParser";
-import { createSubtitleIndexAligner } from "./subtitleIndexAlign";
+} from "./aiResponseParser.js";
+import { createSubtitleIndexAligner } from "./subtitleIndexAlign.js";
 import {
   isLegacyIndexSubtitleItem,
   mapBoundaryItemToCue,
-} from "../subtitle/subtitleBoundaryProtocol";
+} from "../subtitle/subtitleBoundaryProtocol.js";
 
 /**
  * 创建 Server-Sent Events (SSE) 协议数据流解析器

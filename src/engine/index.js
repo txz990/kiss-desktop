@@ -3,20 +3,13 @@
 // 通过自定义 API v2 协议的 Request/Response Hook 适配 OpenAI chat/completions 格式。
 // Hook 以字符串形式存储（与设置页、genTransReq 的 sval 求值保持一致）。
 
-import {
-  handleTranslate,
-  OPT_TRANS_CUSTOMIZE,
-} from "./apis/trans";
-import { getDocInfo } from "./libs/docInfo";
+import { handleTranslate } from "./apis/trans.js";
+import { OPT_TRANS_CUSTOMIZE } from "./config/index.js";
+import { getDocInfo } from "./libs/docInfo.js";
 
 // OpenAI 兼容端点的默认 Request Hook（reshape 成 chat/completions 请求）。
-const DEFAULT_REQUEST_HOOK = `async (args) => {
-  const url = args.url;
-  const method = "POST";
-  const headers = {
-    "Content-type": "application/json",
-    Authorization: \`Bearer \${args.key}\`,
-  };
+// 注意：hook 由 sval 解释执行，避免使用 async / 可选链 / 模板字符串。
+const DEFAULT_REQUEST_HOOK = `(args) => {
   const body = {
     model: args.model,
     messages: [
@@ -26,13 +19,19 @@ const DEFAULT_REQUEST_HOOK = `async (args) => {
     temperature: 0,
     stream: false,
   };
-  return { url, body, headers, method };
+  const headers = {
+    "Content-type": "application/json",
+    Authorization: "Bearer " + (args.key || ""),
+  };
+  return { url: args.url, method: "POST", headers: headers, body: body };
 }`;
 
 // OpenAI 兼容端点的默认 Response Hook（从 chat/completions 响应抽取译文）。
-const DEFAULT_RESPONSE_HOOK = `async ({ res }) => {
-  const content = res?.choices?.[0]?.message?.content || "";
-  return { translations: [[content]] };
+// 返回 [[译文, 原文]]，与引擎的 result 约定一致。
+const DEFAULT_RESPONSE_HOOK = `({ res, texts }) => {
+  const choice = res && res.choices && res.choices[0];
+  const content = (choice && choice.message && choice.message.content) || "";
+  return { translations: [[content, (texts && texts[0]) || ""]] };
 }`;
 
 // 默认引擎配置（用户可在设置页覆盖 url / key / model，或改用内置 API）。
@@ -44,8 +43,8 @@ export const DEFAULT_ENGINE_CONFIG = {
   model: "gpt-5.5",
   useStream: false,
   useBatchFetch: false,
-  requestHook: DEFAULT_REQUEST_HOOK,
-  responseHook: DEFAULT_RESPONSE_HOOK,
+  reqHook: DEFAULT_REQUEST_HOOK,
+  resHook: DEFAULT_RESPONSE_HOOK,
   contextSize: 0,
   useContext: false,
   fetchInterval: 0,
