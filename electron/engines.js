@@ -7,6 +7,7 @@
 //    里已经实现（genGoogle / genBaidu / genMicrosoft / genDeeplFree / genYandexFree /
 //    genTencent / genVolcengine）。桌面端没有浏览器 CORS 限制，反而比扩展版更省事。
 import { DEFAULT_API_LIST, OPT_TRANS_CUSTOMIZE } from "../src/engine/config/index.js";
+import { DESKTOP_API_PRESETS } from "../src/engine/index.js";
 
 // 分组顺序：免费优先（按用户要求把免费的放在最前面）
 export const ENGINE_GROUPS = [
@@ -66,6 +67,14 @@ const META = {
   AzureAI: { label: "Azure 翻译", group: "keyed", needsKey: true },
   DeepL: { label: "DeepL 官方 API", group: "keyed", needsKey: true },
   Yandex: { label: "Yandex Cloud API", group: "keyed", needsKey: true },
+  // DeepLX 其实**不需要 Key**，但需要自己先跑一个 DeepLX 服务并填它的地址，
+  // 不是零配置开箱可用，所以留在本组；用 hint 说清楚，避免被组名误导。
+  DeepLX: {
+    label: "DeepLX（自建服务）",
+    group: "keyed",
+    needsKey: false,
+    hint: "无需 Key，但要先自建 DeepLX 服务并把地址填到「接口 URL」",
+  },
 
   // ── 自定义 ──
   [OPT_TRANS_CUSTOMIZE]: {
@@ -75,6 +84,34 @@ const META = {
     hint: "填 URL + Key + 模型，用 Request/Response Hook 适配任意接口",
   },
 };
+
+// ── 桌面端自建引擎（上游没有，但公开接口可用）──
+// 实现放在 src/engine/index.js 的 DESKTOP_API_PRESETS（复用自定义 Hook 通道），
+// 这里只负责给它一个中文名/分组，让它和内置引擎一样出现在下拉里。
+// 注意这些引擎的 apiType 是「虚拟 id」（如 YoudaoFree），由 resolveApiSetting
+// 映射到真实的 apiType（Custom）—— 这样下拉里不会和「自定义接口」撞值。
+const DESKTOP_META = {
+  YoudaoFree: {
+    label: "有道翻译（免费）",
+    group: "free",
+    hint: "公开接口，无需注册；多段文本按行合并发送",
+  },
+};
+
+const DESKTOP_ENGINES = Object.entries(DESKTOP_API_PRESETS).map(([id, preset]) => {
+  const m = DESKTOP_META[id] || {};
+  return {
+    apiType: id,
+    apiSlug: preset.apiSlug || id,
+    label: m.label || id,
+    group: m.group || "free",
+    hint: m.hint || "",
+    needsKey: !!m.needsKey,
+    needsModel: !!m.needsModel,
+    // 保留虚拟 id：resolveApiSetting 认它
+    preset: { ...preset, apiType: id },
+  };
+});
 
 // 浏览器专有、Node 下不可用的引擎（Chrome 内置 Gemini AI），直接排除。
 const UNSUPPORTED = new Set(["BuiltinAI"]);
@@ -101,11 +138,12 @@ function buildEngine(preset) {
   };
 }
 
-export const ENGINES = DEFAULT_API_LIST.filter((x) => !UNSUPPORTED.has(x.apiType))
-  .map(buildEngine)
-  .sort((a, b) => {
-    const d = GROUP_ORDER.indexOf(a.group) - GROUP_ORDER.indexOf(b.group);
-    return d !== 0 ? d : a.label.localeCompare(b.label, "zh-CN");
-  });
+export const ENGINES = [
+  ...DESKTOP_ENGINES,
+  ...DEFAULT_API_LIST.filter((x) => !UNSUPPORTED.has(x.apiType)).map(buildEngine),
+].sort((a, b) => {
+  const d = GROUP_ORDER.indexOf(a.group) - GROUP_ORDER.indexOf(b.group);
+  return d !== 0 ? d : a.label.localeCompare(b.label, "zh-CN");
+});
 
 export const getEngine = (apiType) => ENGINES.find((e) => e.apiType === apiType);

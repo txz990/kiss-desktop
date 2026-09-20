@@ -58,6 +58,59 @@ export const DEFAULT_ENGINE_CONFIG = {
   httpTimeout: 30000,
 };
 
+// ── 桌面端自建引擎（上游没有的）──────────────────────────────────────────────
+//
+// 有道**不在** kiss-translator 的引擎清单里，所以不能靠 DEFAULT_API_LIST 白拿。
+// 但它的公开接口（aidemo.youdao.com/trans）实测可用，于是用「自定义 Hook」机制接进来：
+// 完全不需要改上游 src/engine/apis/trans.js，上游同步时零冲突。
+//
+// 约定：每个自建引擎有自己的 id（不复用 "Custom"），否则在下拉里会和
+// 「自定义接口」撞值（Select 的 value 用的是 apiType）；id → 真实 apiType
+// 的落点在 resolveApiSetting()。
+const YOUDAO_REQUEST_HOOK = `(args) => {
+  // 有道的语言码与标准码不同：zh-CN → zh-CHS、zh-TW → zh-CHT，其余同名；
+  // 源语言未指定时用 "Auto"（注意首字母大写）。
+  const LANG = {
+    "zh-CN": "zh-CHS", "zh-TW": "zh-CHT",
+    "en": "en", "ja": "ja", "ko": "ko", "fr": "fr", "de": "de",
+    "es": "es", "ru": "ru", "it": "it", "pt": "pt", "ar": "ar",
+    "th": "th", "vi": "vi", "id": "id", "nl": "nl", "pl": "pl", "tr": "tr",
+  };
+  const from = LANG[args.fromLang] || "Auto";
+  const to = LANG[args.toLang] || "Auto";
+  const texts = args.texts || [];
+  const url = args.url
+    + "?q=" + encodeURIComponent(texts.join("\\n"))
+    + "&from=" + from
+    + "&to=" + to;
+  return { url: url, method: "GET", headers: {} };
+}`;
+
+const YOUDAO_RESPONSE_HOOK = `({ res, texts }) => {
+  const list = (res && res.translation) || [];
+  const src = texts || [];
+  const out = [];
+  for (let i = 0; i < src.length; i++) {
+    const translated = list[i] !== undefined ? list[i] : (list[0] || "");
+    out.push([translated, src[i]]);
+  }
+  return { translations: out };
+}`;
+
+export const DESKTOP_API_PRESETS = {
+  YoudaoFree: {
+    apiType: OPT_TRANS_CUSTOMIZE, // 复用「自定义 Hook」通道
+    apiSlug: "youdao-free",
+    url: "https://aidemo.youdao.com/trans",
+    useStream: false,
+    useBatchFetch: false,
+    reqHook: YOUDAO_REQUEST_HOOK,
+    resHook: YOUDAO_RESPONSE_HOOK,
+    // 单位是**秒**（同 DEFAULT_HTTP_TIMEOUT 的约定），fetch 层会 ×1000。
+    httpTimeout: 30,
+  },
+};
+
 // 内置引擎的默认配置表（数据源是引擎层自带的接口清单 DEFAULT_API_LIST）
 const API_DEFAULTS = new Map(DEFAULT_API_LIST.map((x) => [x.apiType, x]));
 
@@ -90,17 +143,28 @@ const stripEmptyStrings = (obj) => {
  * 3) 自定义接口的 Hook 用桌面端默认；config 里那份 defaultRequestHook 只是调试占位
  *    （只有 console.log，没有 return），不可用于生产。
  * 4) preset 与用户表单里的空串都不能参与覆盖，见 stripEmptyStrings。
+ * 5) 自建引擎（DESKTOP_API_PRESETS）的 id 要落到 preset 里的真实 apiType，
+ *    且**它的 Hook 优先于桌面端默认 Hook**（否则有道会被当成 OpenAI 端点）。
  */
 export function resolveApiSetting(input = {}) {
-  const apiType = input.apiType || DEFAULT_ENGINE_CONFIG.apiType;
-  const preset = API_DEFAULTS.get(apiType) || {};
+  const requested = input.apiType || DEFAULT_ENGINE_CONFIG.apiType;
+  const desktopPreset = DESKTOP_API_PRESETS[requested];
+  const preset = desktopPreset || API_DEFAULTS.get(requested) || {};
+  // 自建引擎的 id 在这里落到真实 apiType（如 YoudaoFree → "Custom"）
+  const apiType = preset.apiType || requested;
   const userInput = stripEmptyStrings(input);
 
   const merged = { ...DEFAULT_ENGINE_CONFIG, ...stripEmptyStrings(preset), ...userInput, apiType };
 
   if (apiType === OPT_TRANS_CUSTOMIZE) {
-    merged.reqHook = userInput.reqHook || DEFAULT_REQUEST_HOOK;
-    merged.resHook = userInput.resHook || DEFAULT_RESPONSE_HOOK;
+    // 优先级：用户在设置页手写的 Hook > **自建引擎自带**的 Hook > 桌面端默认 Hook。
+    // ⚠️ 这里只能用 desktopPreset.reqHook，**绝不能**用上游 Custom 预设的 reqHook ——
+    //    上游那份是 `defaultRequestHook` 调试占位（只有 console.log、没有 return，
+    //    见 config/api.js），一旦泄进兜底链，请求规格会退化成 {text,from,to}，
+    //    表现为「翻译不报错但译文为空」。
+    const presetHook = desktopPreset || {};
+    merged.reqHook = userInput.reqHook || presetHook.reqHook || DEFAULT_REQUEST_HOOK;
+    merged.resHook = userInput.resHook || presetHook.resHook || DEFAULT_RESPONSE_HOOK;
   } else {
     delete merged.reqHook;
     delete merged.resHook;

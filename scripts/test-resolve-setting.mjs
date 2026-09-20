@@ -95,4 +95,48 @@ check("明确的假值配置不能被当成「没填」丢掉", () => {
   assert.equal(s.contextSize, 0);
 });
 
+check("自建引擎 YoudaoFree：虚拟 id 落到真实 apiType，且保留自己的 Hook", () => {
+  const s = resolveApiSetting({ apiType: "YoudaoFree" });
+  // id 必须落成 Custom，否则 genReqFuncs 找不到构造器
+  assert.equal(s.apiType, OPT_TRANS_CUSTOMIZE);
+  assert.ok(s.url.includes("youdao.com"), `url 应指向有道，实际 ${JSON.stringify(s.url)}`);
+  // 关键：不能被桌面端默认的 OpenAI Hook 覆盖
+  assert.ok(!s.reqHook.includes("chat"), "不应套用 OpenAI 的默认 Hook");
+  assert.ok(s.reqHook.includes("youdao") || s.reqHook.includes("q="), "应是有道专用 Hook");
+  assert.ok(s.resHook.includes("translation"), "应是有道专用解析 Hook");
+  // 单位是秒（同 DEFAULT_HTTP_TIMEOUT 约定）
+  assert.equal(s.httpTimeout, 30);
+});
+
+check("自建引擎 YoudaoFree：用户在设置页手写的 Hook 优先于预设", () => {
+  const s = resolveApiSetting({ apiType: "YoudaoFree", reqHook: "(a) => ({ url: a.url })" });
+  assert.equal(s.reqHook, "(a) => ({ url: a.url })");
+});
+
+check("自建引擎不影响「自定义接口」的默认 Hook 兜底", () => {
+  const s = resolveApiSetting({ apiType: OPT_TRANS_CUSTOMIZE });
+  // 默认 Hook 不硬编码端点（用的是 args.url），所以断言它的结构特征
+  assert.ok(s.reqHook.includes("messages"), "自定义接口应拿到 OpenAI 兼容默认 Hook");
+  assert.ok(s.reqHook.includes("args.url"), "应走 args.url 而不是写死地址");
+  assert.ok(s.resHook.includes("choices"), "响应 Hook 应按 OpenAI 格式解析");
+});
+
+check("上游 Custom 预设里的调试占位 Hook 绝不能泄进兜底链", () => {
+  // config/api.js 的 defaultRequestHook 只有 console.log、没有 return，
+  // 一旦生效请求规格会退化成 {text,from,to} → 翻译不报错但译文为空。
+  for (const input of [
+    { apiType: OPT_TRANS_CUSTOMIZE },
+    { apiType: OPT_TRANS_CUSTOMIZE, url: "http://x/v1/chat/completions" },
+    {}, // 不带 apiType，走默认
+  ]) {
+    const s = resolveApiSetting(input);
+    assert.ok(
+      !s.reqHook.includes("request hook args"),
+      `占位 Hook 泄漏了：${s.reqHook.slice(0, 60)}`
+    );
+    assert.ok(!s.reqHook.includes("console.log"), "Hook 不应是调试占位实现");
+    assert.ok(s.reqHook.includes("url"), "Hook 必须返回带 url 的对象");
+  }
+});
+
 console.log(`\n${passed} 项通过，退出码 ${process.exitCode || 0}`);
