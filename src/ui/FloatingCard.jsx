@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Box, Paper, Typography, IconButton, Stack, CircularProgress } from "@mui/material";
-import { ContentCopyIcon, CloseIcon } from "./icons.jsx";
+import { ContentCopyIcon, CloseIcon, SettingsIcon } from "./icons.jsx";
 
 // 浮窗译文卡片：接收主进程通过 IPC 推送的翻译结果。
 export default function FloatingCard() {
@@ -41,9 +41,15 @@ export default function FloatingCard() {
           <Typography variant="caption" color="text.secondary">
             kiss-desktop
           </Typography>
-          <IconButton size="small" sx={{ WebkitAppRegion: "no-drag" }} onClick={() => window.close()}>
-            <CloseIcon fontSize="small" />
-          </IconButton>
+          <Stack direction="row" sx={{ WebkitAppRegion: "no-drag" }}>
+            {/* 第二入口：托盘图标万一不可见/不可点，用户仍能从浮窗进设置页。 */}
+            <IconButton size="small" title="设置" onClick={() => window.desktop.openSettings()}>
+              <SettingsIcon fontSize="small" />
+            </IconButton>
+            <IconButton size="small" title="关闭" onClick={() => window.close()}>
+              <CloseIcon fontSize="small" />
+            </IconButton>
+          </Stack>
         </Stack>
 
         {state.text && (

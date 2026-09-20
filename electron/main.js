@@ -16,6 +16,7 @@ import { startCapture, stopCapture } from "./capture.js";
 import { getConfig, saveConfig } from "./store.js";
 import { translate } from "../src/engine/index.js";
 import { ENGINES, ENGINE_GROUPS } from "./engines.js";
+import { buildTrayIconPng } from "./tray-icon.js";
 import { IPC } from "./ipc.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -100,12 +101,20 @@ function createSettingsWindow() {
   });
 }
 
-function createTray() {
+// 托盘图标：优先用 assets/tray.png（方便用户自行换图标），没有就在内存里生成。
+// ⚠️ 绝不能再退回 nativeImage.createEmpty()：空图标在 Windows 下不可见也不可点，
+//    而托盘是打开设置页的入口，等于整个应用没法配置（浮窗上的设置按钮是第二入口）。
+export function loadTrayImage() {
   const iconPath = path.join(__dirname, "../assets/tray.png");
-  const icon = existsSync(iconPath)
-    ? nativeImage.createFromPath(iconPath)
-    : nativeImage.createEmpty();
-  tray = new Tray(icon);
+  if (existsSync(iconPath)) {
+    const img = nativeImage.createFromPath(iconPath);
+    if (!img.isEmpty()) return img;
+  }
+  return nativeImage.createFromBuffer(buildTrayIconPng());
+}
+
+function createTray() {
+  tray = new Tray(loadTrayImage());
   tray.setToolTip("kiss-desktop 划词翻译");
   tray.setContextMenu(
     Menu.buildFromTemplate([
