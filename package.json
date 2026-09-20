@@ -1,0 +1,55 @@
+{
+  "name": "kiss-desktop",
+  "version": "0.1.0",
+  "description": "桌面划词翻译（Electron） - 复用 kiss-translator 引擎层，全局热键 + 剪贴板取词，无边框置顶浮窗",
+  "private": true,
+  "type": "module",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k -n vite,electron \"vite\" \"electron .\"",
+    "build": "vite build",
+    "dist": "vite build && electron-builder",
+    "pack": "electron-builder --dir"
+  },
+  "dependencies": {
+    "@emotion/react": "^11.11.1",
+    "@emotion/styled": "^11.11.0",
+    "@mui/icons-material": "^5.15.15",
+    "@mui/material": "^5.15.15",
+    "@streamparser/json": "^0.0.22",
+    "electron-store": "^11.0.2",
+    "koffi": "^3.3.1",
+    "query-string": "^8.1.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "sval": "^0.5.2",
+    "uiohook-napi": "^1.5.5"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "electron": "^44.4.3",
+    "electron-builder": "^25.1.8",
+    "vite": "^5.4.11"
+  },
+  "build": {
+    "appId": "com.kissdesktop.app",
+    "productName": "kiss-desktop",
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "src/engine/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/node_modules/uiohook-napi/**",
+      "**/node_modules/koffi/**"
+    ],
+    "win": {
+      "target": [
+        "portable",
+        "nsis"
+      ]
+    }
+  }
+}
