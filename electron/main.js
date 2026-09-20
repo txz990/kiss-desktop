@@ -18,11 +18,29 @@ import { translate } from "../src/engine/index.js";
 import { IPC } from "./ipc.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DEV_URL = process.env.VITE_DEV_SERVER_URL;
+// 开发模式：npm run dev 时传 --dev，走 Vite 开发服务器（5173，热更新）。
+// 也支持显式指定 VITE_DEV_SERVER_URL。
+const isDev = process.argv.includes("--dev");
+const DEV_URL =
+  process.env.VITE_DEV_SERVER_URL || (isDev ? "http://localhost:5173" : "");
 
 function rendererUrl(view) {
   if (DEV_URL) return `${DEV_URL}?view=${view}`;
   return `file://${path.join(__dirname, "../dist/renderer/index.html")}?view=${view}`;
+}
+
+// 开发模式下 Vite 可能尚未就绪，连不上就重试（最多约 15 秒）。
+async function loadRenderer(win, view) {
+  const url = rendererUrl(view);
+  if (!url.startsWith("http")) return win.loadURL(url);
+  for (let i = 0; i < 30; i++) {
+    try {
+      return await win.loadURL(url);
+    } catch {
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+  return win.loadURL(url);
 }
 
 let floatWin = null;
@@ -48,7 +66,7 @@ function createFloatWindow() {
       nodeIntegration: false,
     },
   });
-  floatWin.loadURL(rendererUrl("floating"));
+  loadRenderer(floatWin, "floating");
   floatWin.on("blur", () => floatWin.hide());
 }
 
@@ -66,7 +84,7 @@ function createSettingsWindow() {
       nodeIntegration: false,
     },
   });
-  settingsWin.loadURL(rendererUrl("settings"));
+  loadRenderer(settingsWin, "settings");
 }
 
 function createTray() {
