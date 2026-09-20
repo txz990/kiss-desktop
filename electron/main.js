@@ -12,11 +12,13 @@ import {
 import * as path from "path";
 import { fileURLToPath } from "url";
 import { existsSync } from "fs";
-import { startCapture, stopCapture } from "./capture.js";
+import { startCapture, stopCapture, setHotkey, getCurrentHotkey, isCaptureStarted } from "./capture.js";
 import { getConfig, saveConfig } from "./store.js";
 import { translate } from "../src/engine/index.js";
 import { ENGINES, ENGINE_GROUPS } from "./engines.js";
 import { buildTrayIconPng } from "./tray-icon.js";
+import { checkHotkeyConflict, describeHotkey, getKeyList, normalizeHotkey } from "./hotkey.js";
+import { lookupWord } from "./dict.js";
 import { IPC } from "./ipc.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -195,18 +197,77 @@ function registerIpc() {
     return await translate(text, { apiSetting });
   });
   ipcMain.on(IPC.OPEN_SETTINGS, () => openSettings());
+
+  // ── 热键 ──────────────────────────────────────────────────────────────────
+  ipcMain.handle(IPC.HOTKEY_KEYS, () => getKeyList());
+  // 检测分两层：先校验格式（必须带修饰键、键位可识别），
+  // 再用 RegisterHotKey 探针查是否已被别的程序/系统占用。
+  ipcMain.handle(IPC.HOTKEY_CHECK, (_e, hotkey) => checkHotkeyConflict(hotkey));
+  ipcMain.handle(IPC.HOTKEY_APPLY, (_e, hotkey) => {
+    const hk = normalizeHotkey(hotkey);
+    const verdict = checkHotkeyConflict(hk);
+    if (!verdict.ok) return { ok: false, reason: verdict.reason, level: verdict.level };
+    saveConfig({ hotkey: hk });
+    // 热更新：内存里换掉即可，钩子不用重装、程序不用重启
+    setHotkey(hk);
+    return { ok: true, hotkey: hk, label: describeHotkey(hk), reason: verdict.reason };
+  });
+  ipcMain.handle(IPC.CAPTURE_STATUS, () => ({
+    started: isCaptureStarted(),
+    hotkey: getCurrentHotkey(),
+    label: describeHotkey(getCurrentHotkey() || {}),
+  }));
+  // 暂停/恢复取词。设置页进入热键录制时先暂停，避免按下当前热键真的触发翻译并抢焦点。
+  ipcMain.handle(IPC.CAPTURE_SET, (_e, enabled) => {
+    if (enabled) {
+      if (!isCaptureStarted()) startCapture(onCaptured);
+    } else {
+      stopCapture();
+    }
+    return { started: isCaptureStarted() };
+  });
+
+  // ── 词典（音标 / 释义 / 发音音频）──────────────────────────────────────────
+  // 查不到就返回 null，由渲染进程降级到系统 TTS，不要让异常冒到 UI。
+  ipcMain.handle(IPC.DICT_LOOKUP, async (_e, text) => {
+    try {
+      return await lookupWord(text);
+    } catch (err) {
+      console.error("[dict] lookup failed:", err?.message || err);
+      return null;
+    }
+  });
 }
 
 app.whenReady().then(() => {
   // 托盘驱动的后台翻译工具，不需要 Electron 默认菜单栏（File/Edit/View/Window）。
   Menu.setApplicationMenu(null);
 
-  createFloatWindow();
-  createSettingsWindow();
-  createTray();
-  registerIpc();
-  startCapture(onCaptured);
-  startClipboardWatch();
+  // ⚠️ 每一步单独兜住异常：之前 startCapture 抛错（uiohook 导入写法不对）
+  //    直接把后面的 startClipboardWatch 一起带崩了，两个功能同时消失且毫无提示。
+  //    现在任何一步失败都只影响自己，并被明确记录。
+  const steps = [
+    ["浮窗", createFloatWindow],
+    ["设置窗", createSettingsWindow],
+    ["托盘", createTray],
+    ["IPC", registerIpc],
+    ["剪贴板监听", startClipboardWatch],
+  ];
+  for (const [name, fn] of steps) {
+    try {
+      fn();
+    } catch (err) {
+      console.error(`[boot] ${name} 初始化失败:`, err?.message || err);
+    }
+  }
+
+  // 取词放最后：它会挂全局键盘钩子，且失败信息对用户最有价值
+  const result = startCapture(onCaptured);
+  if (result.ok) {
+    console.log(`[boot] 取词已就绪，热键 ${describeHotkey(getConfig().hotkey)}`);
+  } else {
+    console.error("[boot] 取词启动失败：", result.error);
+  }
 });
 
 // 菜单已移除，保留 F12 作为开发者工具的唯一入口，便于排查问题。

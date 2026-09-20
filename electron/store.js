@@ -7,10 +7,14 @@ const store = new Store({ name: "kiss-desktop" });
 const DEFAULTS = {
   // 引擎配置（自定义 API v2 协议），默认指向本机 OpenAI 兼容端点。
   engine: { ...DEFAULT_ENGINE_CONFIG },
-  // 取词热键，默认 Alt+D（uiohook keycode: D = 32）。
+  // 取词热键，默认 Alt+D。
+  //  keycode 用的是 uiohook 的扫描码（D = 32），不是 Windows VK —— 匹配时直接比 keycode。
+  //  可在设置页点「录制」改键，保存后主进程会热更新，不用重启。
   hotkey: { alt: true, ctrl: false, meta: false, shift: false, keycode: 32 },
   // 复制即翻译（剪贴板监听模式）。
   copyToTranslate: false,
+  // 发音：auto = 翻译完成后自动朗读原文；accent = 单词发音默认口音
+  pronounce: { auto: false, accent: "us" },
 };
 
 export const getConfig = () => {
@@ -19,6 +23,7 @@ export const getConfig = () => {
     engine: { ...DEFAULTS.engine, ...(cfg.engine || {}) },
     hotkey: { ...DEFAULTS.hotkey, ...(cfg.hotkey || {}) },
     copyToTranslate: cfg.copyToTranslate ?? DEFAULTS.copyToTranslate,
+    pronounce: { ...DEFAULTS.pronounce, ...(cfg.pronounce || {}) },
   };
 };
 
@@ -31,6 +36,7 @@ export const saveConfig = (partial) => {
       partial.copyToTranslate !== undefined
         ? partial.copyToTranslate
         : current.copyToTranslate,
+    pronounce: { ...current.pronounce, ...(partial.pronounce || {}) },
   };
   store.set("config", next);
   return next;

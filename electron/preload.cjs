@@ -20,6 +20,12 @@ const IPC = {
   TRANSLATION: "translation",
   OPEN_SETTINGS: "open-settings",
   COPY_TO_TRANSLATE: "copy-to-translate",
+  HOTKEY_KEYS: "hotkey-keys",
+  HOTKEY_CHECK: "hotkey-check",
+  HOTKEY_APPLY: "hotkey-apply",
+  CAPTURE_STATUS: "capture-status",
+  CAPTURE_SET: "capture-set",
+  DICT_LOOKUP: "dict-lookup",
 };
 
 contextBridge.exposeInMainWorld("desktop", {
@@ -28,6 +34,14 @@ contextBridge.exposeInMainWorld("desktop", {
   getEngines: () => ipcRenderer.invoke(IPC.ENGINES),
   translate: (text, engine) => ipcRenderer.invoke(IPC.TRANSLATE, text, engine),
   openSettings: () => ipcRenderer.send(IPC.OPEN_SETTINGS),
+  // 热键相关
+  getHotkeyKeys: () => ipcRenderer.invoke(IPC.HOTKEY_KEYS),
+  checkHotkey: (hotkey) => ipcRenderer.invoke(IPC.HOTKEY_CHECK, hotkey),
+  applyHotkey: (hotkey) => ipcRenderer.invoke(IPC.HOTKEY_APPLY, hotkey),
+  getCaptureStatus: () => ipcRenderer.invoke(IPC.CAPTURE_STATUS),
+  setCapture: (enabled) => ipcRenderer.invoke(IPC.CAPTURE_SET, !!enabled),
+  // 词典查询（返回 null 表示不是词条或查询失败，调用方降级处理）
+  lookupWord: (text) => ipcRenderer.invoke(IPC.DICT_LOOKUP, text),
   // 返回「取消订阅」函数，供 React useEffect 卸载时清理。
   // （若直接返回 ipcRenderer.on 的返回值，调用方拿到的是 ipcRenderer 对象而非函数，
   //   卸载时执行 off() 会抛 TypeError。）
