@@ -1,0 +1,29 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+out/
+release/
+.vite/
+*.log
+
+# electron
+*.exe
+*.dmg
+*.AppImage
+*.snap
+
+# env
+.env
+.env.local
+
+# os
+.DS_Store
+Thumbs.db
+
+# editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
