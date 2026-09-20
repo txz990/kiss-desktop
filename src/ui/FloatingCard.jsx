@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Box, Paper, Typography, IconButton, Stack, CircularProgress } from "@mui/material";
-import ContentCopyIcon from "@mui/icons-material/ContentCopy";
-import CloseIcon from "@mui/icons-material/Close";
+import { ContentCopyIcon, CloseIcon } from "./icons.jsx";
 
 // 浮窗译文卡片：接收主进程通过 IPC 推送的翻译结果。
 export default function FloatingCard() {

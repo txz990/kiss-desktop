@@ -9,12 +9,12 @@
     "dev": "concurrently -k -n vite,electron \"vite\" \"electron .\"",
     "build": "vite build",
     "dist": "vite build && electron-builder",
-    "pack": "electron-builder --dir"
+    "pack": "electron-builder --dir",
+    "test": "node scripts/headless-test.mjs"
   },
   "dependencies": {
     "@emotion/react": "^11.11.1",
     "@emotion/styled": "^11.11.0",
-    "@mui/icons-material": "^5.15.15",
     "@mui/material": "^5.15.15",
     "@streamparser/json": "^0.0.22",
     "electron-store": "^11.0.2",
