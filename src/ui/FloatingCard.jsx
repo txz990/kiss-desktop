@@ -13,6 +13,10 @@ export default function FloatingCard() {
   const [dict, setDict] = useState(null);
   const [playing, setPlaying] = useState("");
   const pronounceRef = useRef({ auto: false, accent: "us" });
+  // 词典查询是否已结束（成功或失败都算）。自动朗读必须等它落地，
+  // 否则会先按"没有词典"用 TTS 读一遍、拿到音频后再读一遍 —— 朗读两次。
+  const [dictReady, setDictReady] = useState(false);
+  const autoPlayedRef = useRef("");
 
   useEffect(() => {
     const off = window.desktop.onTranslation((payload) => {
@@ -42,8 +46,11 @@ export default function FloatingCard() {
   // 新文本 → 查词典。主进程会判断"是否值得查"，查不到返回 null，这里据此降级。
   useEffect(() => {
     const text = state.text;
+    setDictReady(false);
+    autoPlayedRef.current = "";
     if (!text) {
       setDict(null);
+      setDictReady(true);
       return undefined;
     }
     let alive = true;
@@ -54,6 +61,9 @@ export default function FloatingCard() {
       })
       .catch(() => {
         if (alive) setDict(null);
+      })
+      .finally(() => {
+        if (alive) setDictReady(true);
       });
     return () => {
       alive = false;
@@ -104,32 +114,34 @@ export default function FloatingCard() {
     );
 
   // 翻译完成后自动朗读原文（可选，设置页开关）。
-  // 单词且设置了默认口音时，走有声道音频；否则用系统 TTS。
+  // 两个前提：词典查询已结束（否则会朗读两次，见 dictReady 注释）、同一段文本只自动读一次。
   useEffect(() => {
     const { auto, accent } = pronounceRef.current;
-    if (!auto || !state.text || state.loading || state.error) return undefined;
+    if (!auto || !dictReady || !state.text || state.loading || state.error) return undefined;
+    if (autoPlayedRef.current === state.text) return undefined;
+    autoPlayedRef.current = state.text;
     const t = setTimeout(() => {
       const audio = accent === "uk" ? dict?.uk : dict?.us;
       if (audio) {
         setPlaying(`word-${accent}`);
         playAudio(audio).then((ok) => {
-          if (!ok) {
-            speak(dict?.word || state.text, {
-              lang: accent === "uk" ? "en-GB" : "en-US",
-              onEnd: () => setPlaying(""),
-              onError: () => setPlaying(""),
-            });
+          if (ok) {
+            setPlaying("");
             return;
           }
-          setPlaying("");
+          speak(dict?.word || state.text, {
+            lang: accent === "uk" ? "en-GB" : "en-US",
+            onEnd: () => setPlaying(""),
+            onError: () => setPlaying(""),
+          });
         });
         return;
       }
       readSource();
-    }, 80);
+    }, 60);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.result, state.loading, state.error, dict]);
+  }, [state.result, state.loading, state.error, dictReady, dict]);
 
   const copyResult = () => {
     if (state.result) navigator.clipboard?.writeText(state.result);
