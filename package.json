@@ -10,9 +10,10 @@
     "build": "vite build",
     "dist": "vite build && electron-builder",
     "pack": "electron-builder --dir",
-    "test": "node scripts/headless-test.mjs && node scripts/test-resolve-setting.mjs && node scripts/test-hotkey.mjs && node scripts/test-capture.mjs",
+    "test": "node scripts/headless-test.mjs && node scripts/test-resolve-setting.mjs && node scripts/test-hotkey.mjs && node scripts/test-cliptext.mjs && node scripts/test-capture.mjs",
     "test:setting": "node scripts/test-resolve-setting.mjs",
     "test:hotkey": "node scripts/test-hotkey.mjs",
+    "test:cliptext": "node scripts/test-cliptext.mjs",
     "test:capture": "node scripts/test-capture.mjs",
     "probe": "node scripts/probe-engines.mjs",
     "make:icon": "node scripts/make-tray-icon.mjs"

@@ -1,7 +1,7 @@
 // 取词层：uiohook-napi 全局热键监听 + 模拟 Ctrl+C + 读取/恢复系统剪贴板。
 // 命中热键 → 备份剪贴板 → 模拟 Ctrl+C → 等前台程序复制 → 读回选中文字 → 恢复剪贴板。
 //
-// ── 这个文件曾经整个不工作，两个坑都写在下面（别再踩）────────────────────────
+// ── 这个文件先后崩过两次，坑全写在下面（别再踩第二次）──────────────────────
 //  1) `uiohook-napi` **没有 default 导出**（只导出 uIOhook / UiohookKey / EventType 等具名成员）。
 //     写成 `import uiohook from "uiohook-napi"` 时，Node 的 CJS 互操作会把 module.exports
 //     整个当成 default —— 于是 `uiohook.on` 是 undefined，
@@ -10,8 +10,18 @@
 //  2) 事件对象的 `type` 字段是**数字枚举** `EventType.EVENT_KEY_PRESSED (=4)`，不是字符串
 //     `"keydown"`；`"keydown"` 只是 EventEmitter 的事件名。
 //     所以 `if (e.type !== "keydown") return;` 会**永远提前返回**，热键一辈子不触发。
+//  3) Electron **44 把 clipboard 全部异步化**。`clipboard.readText()` 返回的是
+//     Promise 而不是字符串，写成同步形态 `(cur || "").trim()` 就会得到
+//     "XXX.trim is not a function" —— Promise 是 truthy，`|| ""` 根本兜不住。
+//     所以现在一切剪贴板读写都走 ./cliptext.js（那里保证**永远返回 string**）。
+//     同时注意：writeHTML / writeImage / writeRTF / availableFormats 等 8 个
+//     便捷方法在 Electron 44 里**已被删除**，只剩 clear/has/read/readText/write/writeText。
 import { uIOhook, EventType } from "uiohook-napi";
-import { clipboard } from "electron";
+import {
+  readClipboardText,
+  restoreClipboard,
+  snapshotClipboard,
+} from "./cliptext.js";
 import { createModifierTracker, matchesHotkey } from "./hotkey.js";
 import { simulateCopy } from "./win32clip.js";
 import { getConfig } from "./store.js";
@@ -26,14 +36,23 @@ let currentHotkey = null;
 const mods = createModifierTracker();
 
 /**
- * 抓取当前选区文字：模拟 Ctrl+C 后从剪贴板读取，然后恢复原内容。
+ * 抓取当前选区文字：备份剪贴板 → 模拟 Ctrl+C → 轮询读回选中文字 → 恢复剪贴板。
  *
- * 等待时间改成**自适应轮询**：不同程序复制到剪贴板的耗时差别很大
- * （记事本几乎瞬时，浏览器/Word/PDF 阅读器可能 200ms+）。
- * 原来固定 130ms 太短，是「热键按了但没反应」的常见原因之一。
+ * 两处设计要考虑：
+ * - 等待时间用**自适应轮询**：不同程序复制到剪贴板的耗时差别很大
+ *   （记事本几乎瞬时，浏览器/Word/PDF 阅读器可能 200ms+）。
+ *   原来固定 130ms 太短，是「热键按了但没反应」的常见原因之一。
+ * - 恢复阶段**保留用户的富格式**：以前只回写纯文本，用户之前复制的图片/带格式文字
+ *   会被静默冲掉。现在先做全格式快照，再整体还原；拿不到快照才退化成写纯文本。
+ *
+ * 全程读剪贴板都走 readClipboardText()，它保证返回 string —— Electron 44 之后
+ * readText() 返回 Promise，直接 `.trim()` 会崩（详见文件头坑位 3）。
  */
-function grabSelection({ timeout = 600, interval = 30 } = {}) {
-  const prev = clipboard.readText();
+async function grabSelection({ timeout = 600, interval = 30 } = {}) {
+  // 先备份，再 Ctrl+C：顺序反了就把待抓的内容自己覆盖了
+  const snapshot = await snapshotClipboard();
+  const prev = await readClipboardText();
+
   try {
     simulateCopy();
   } catch (err) {
@@ -41,35 +60,22 @@ function grabSelection({ timeout = 600, interval = 30 } = {}) {
     console.error("[capture] simulateCopy failed:", err.message);
   }
 
-  return new Promise((resolve) => {
-    const deadline = Date.now() + timeout;
-    const tick = () => {
-      let cur = "";
-      try {
-        cur = clipboard.readText();
-      } catch {
-        /* ignore */
-      }
-      const got = (cur || "").trim();
-      if (got && got !== prev.trim()) {
-        // 拿到了新内容：恢复用户原来的剪贴板，避免污染
-        try {
-          clipboard.writeText(prev);
-        } catch {
-          /* ignore */
-        }
-        resolve(got);
-        return;
-      }
-      if (Date.now() >= deadline) {
-        resolve("");
-        return;
-      }
-      setTimeout(tick, interval);
-    };
-    // 先给目标程序一点时间响应按键
-    setTimeout(tick, interval);
-  });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const deadline = Date.now() + timeout;
+  // 先给目标程序一点时间响应按键
+  await sleep(interval);
+
+  while (Date.now() < deadline) {
+    const cur = await readClipboardText();
+    const got = cur.trim();
+    if (got && got !== prev.trim()) {
+      // 拿到了新内容：把用户原来的剪贴板还原回去，避免污染
+      await restoreClipboard(snapshot, prev);
+      return got;
+    }
+    await sleep(interval);
+  }
+  return "";
 }
 
 /**

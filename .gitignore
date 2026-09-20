@@ -27,3 +27,9 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 .idea/
+
+# 诊断脚本运行时产物（Electron 里跑出来的结果文件，不入库）
+scripts/probe-clipboard/probe-result.txt
+scripts/probe-clipboard/stderr.txt
+scripts/probe-clipboard/stdout.txt
+scripts/probe-clipboard/exitcode.txt

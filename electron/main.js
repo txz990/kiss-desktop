@@ -7,12 +7,14 @@ import {
   ipcMain,
   nativeImage,
   screen,
-  clipboard,
 } from "electron";
 import * as path from "path";
 import { fileURLToPath } from "url";
 import { existsSync } from "fs";
 import { startCapture, stopCapture, setHotkey, getCurrentHotkey, isCaptureStarted } from "./capture.js";
+// Electron 44 起 clipboard 全部异步（readText() 返回 Promise），统一走适配层，
+// 不要再直接用 clipboard.readText() —— 会把 Promise 当字符串用而崩溃。
+import { readClipboardText } from "./cliptext.js";
 import { getConfig, saveConfig } from "./store.js";
 import { translate } from "../src/engine/index.js";
 import { ENGINES, ENGINE_GROUPS } from "./engines.js";
@@ -166,17 +168,21 @@ function onCaptured(text) {
 // 复制即翻译模式：轮询剪贴板变化。
 function startClipboardWatch() {
   lastClipboard = "";
-  const timer = setInterval(() => {
+  // 轮询体现在是 async 的（Electron 44 的 readText 返回 Promise），
+  // 700ms 的间隔配 await 有可能重入，加个 busy 闸门，避免同一次复制被处理两遍。
+  let busy = false;
+  const timer = setInterval(async () => {
+    if (busy) return;
     if (!getConfig().copyToTranslate) return;
-    let cur = "";
+    busy = true;
     try {
-      cur = clipboard.readText();
-    } catch {
-      return;
-    }
-    if (cur && cur !== lastClipboard) {
-      lastClipboard = cur;
-      onCaptured(cur.trim());
+      const cur = await readClipboardText();
+      if (cur && cur !== lastClipboard) {
+        lastClipboard = cur;
+        onCaptured(cur.trim());
+      }
+    } finally {
+      busy = false;
     }
   }, 600);
   app.on("before-quit", () => clearInterval(timer));
