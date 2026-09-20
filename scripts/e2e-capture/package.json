@@ -1,0 +1,6 @@
+{
+  "name": "kiss-desktop-e2e-capture",
+  "version": "1.0.0",
+  "private": true,
+  "main": "main.cjs"
+}

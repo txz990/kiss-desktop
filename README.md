@@ -18,7 +18,10 @@ kiss-translator 本体是浏览器扩展，UI/取词/注入全部耦合在页面
 
 ## 取词原理
 
-全局热键（默认 `Alt+D`）→ 备份剪贴板 → 模拟 `Ctrl+C`（koffi `SendInput`）→ 等待 ~120ms → 读回选中文字 → 恢复剪贴板 → 调 `handleTranslate` → 浮窗渲染。
+全局热键（默认 `Alt+D`）→ 备份剪贴板 → 等修饰键松开 → 模拟 `Ctrl+C`（koffi `keybd_event`）→ 自适应轮询读回选中文字 → 恢复剪贴板 → 调 `handleTranslate` → 浮窗渲染。
+
+> ⚠️ 「等修饰键松开」不能省：真人按键是主键先松、修饰键后松，
+> 不等就会把 `Ctrl+C` 送成 `Ctrl+Alt+C`，目标程序不复制 → 表现为「划词没反应」。
 
 进阶可选：koffi 调 Win32 UI Automation `TextPattern` 直接取选中文本（不碰剪贴板）。
 
@@ -31,7 +34,8 @@ npm run build        # 打包 renderer
 npm run dist         # electron-builder 出 exe
 ```
 
-默认翻译接口指向本机 `http://localhost:17377/v1`（模型 gpt-5.5），可在设置页改为任意 OpenAI 兼容端点或内置 API。
+默认引擎是**有道免费翻译**（`aidemo.youdao.com`，免 Key、免注册、装完即可用）。
+想用自己的模型，到设置页把引擎切成「自定义接口」，填任意 OpenAI 兼容端点（如本机 `http://localhost:17377/v1`，模型 `gpt-5.5`）。
 
 ## License
 

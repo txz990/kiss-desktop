@@ -8,7 +8,12 @@
 //
 // 用法：node scripts/test-resolve-setting.mjs
 import assert from "node:assert/strict";
-import { resolveApiSetting, DEFAULT_ENGINE_CONFIG, OPT_TRANS_CUSTOMIZE } from "../src/engine/index.js";
+import {
+  resolveApiSetting,
+  DEFAULT_ENGINE_CONFIG,
+  CUSTOM_API_FALLBACK,
+  OPT_TRANS_CUSTOMIZE,
+} from "../src/engine/index.js";
 
 let passed = 0;
 const check = (name, fn) => {
@@ -22,10 +27,21 @@ const check = (name, fn) => {
   }
 };
 
-check("自定义接口：空 url 走桌面端默认 localhost，不被打成空串", () => {
+check("默认引擎 = 有道免费（零配置开箱可用），不是本机 LLM", () => {
+  const s = resolveApiSetting({});
+  assert.equal(s.url, "https://aidemo.youdao.com/trans", "默认应指向有道免费接口");
+  assert.ok(!String(s.url).includes("localhost"), "默认不该再依赖本机 LLM 服务");
+  // 走的是有道自己的 Hook（拼 q/from/to 的 GET），不是 OpenAI 那套
+  assert.ok(s.reqHook.includes("encodeURIComponent"), `应有道 Hook，实际 ${s.reqHook.slice(0, 60)}`);
+  assert.ok(!s.reqHook.includes("chat/completions"), "不能把 OpenAI Hook 套到有道上");
+  assert.equal(s.apiType, OPT_TRANS_CUSTOMIZE, "自建引擎 id 应落到真实 apiType");
+});
+
+check("自定义接口：空 url 走 CUSTOM_API_FALLBACK，不继承默认引擎（有道）的地址", () => {
   const s = resolveApiSetting({ apiType: OPT_TRANS_CUSTOMIZE, url: "", key: "", model: "" });
-  assert.equal(s.url, DEFAULT_ENGINE_CONFIG.url);
-  assert.equal(s.model, DEFAULT_ENGINE_CONFIG.model);
+  assert.equal(s.url, CUSTOM_API_FALLBACK.url);
+  assert.equal(s.model, CUSTOM_API_FALLBACK.model);
+  assert.ok(!String(s.url).includes("youdao"), "自定义接口不能继承有道的地址");
   assert.equal(typeof s.reqHook, "string");
   assert.equal(typeof s.resHook, "string");
 });
@@ -59,11 +75,12 @@ check("Google2：用户自备 Key 可覆盖内置 Key", () => {
   assert.equal(s.key, "my-own-key");
 });
 
-check("Microsoft：兜底出一个具体 URL，且不带 Hook（真实可用性由 probe-engines 验证）", () => {
+check("Microsoft：兜底出一个非空 URL，且不带 Hook（真实可用性由 probe-engines 验证）", () => {
   const s = resolveApiSetting({ apiType: "Microsoft" });
   // Microsoft 的预设 url 是空串（真实地址由 genMicrosoft 在代码里拼），
-  // 空串被剔除后由 DEFAULT_ENGINE_CONFIG 兜底；该字段对 Microsoft 是惰性的。
-  assert.equal(s.url, DEFAULT_ENGINE_CONFIG.url);
+  // 空串被剔除后由 DEFAULT_ENGINE_CONFIG 兜底；该字段对 Microsoft 是惰性的，
+  // 这里只断言「是具体地址、不是空串」—— 具体是谁无所谓。
+  assert.ok(s.url && s.url.length > 0, `url 应为非空，实际 ${JSON.stringify(s.url)}`);
   assert.equal(s.reqHook, undefined);
   assert.equal(s.resHook, undefined);
 });

@@ -33,3 +33,7 @@ scripts/probe-clipboard/probe-result.txt
 scripts/probe-clipboard/stderr.txt
 scripts/probe-clipboard/stdout.txt
 scripts/probe-clipboard/exitcode.txt
+scripts/e2e-capture/e2e-result.txt
+scripts/e2e-capture/stderr.txt
+scripts/e2e-capture/stdout.txt
+scripts/e2e-capture/exitcode.txt

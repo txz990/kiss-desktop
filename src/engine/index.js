@@ -1,6 +1,6 @@
 // 桌面版引擎入口：在浏览器扩展的 handleTranslate 之上包一层简单易用的 translate()。
-// 既支持内置引擎（谷歌/百度/Bing/DeepL/Yandex/腾讯/火山 等，见 electron/engines.js），
-// 也支持自定义接口（默认对接本机 OpenAI 兼容端点 localhost:17377/v1，模型 gpt-5.5）。
+// 既支持内置引擎（谷歌/Bing/DeepL/Yandex/腾讯/火山 等，见 electron/engines.js），
+// 也支持自建引擎（有道免费）与自定义接口（本机 OpenAI 兼容端点）。
 // Hook 以字符串形式存储（与设置页、genTransReq 的 sval 求值保持一致）。
 
 import { handleTranslate } from "./apis/trans.js";
@@ -40,24 +40,6 @@ const DEFAULT_RESPONSE_HOOK = `({ res, texts }) => {
   return { translations: [[content, (texts && texts[0]) || ""]] };
 }`;
 
-// 默认引擎配置（用户可在设置页覆盖 url / key / model，或改用内置 API）。
-export const DEFAULT_ENGINE_CONFIG = {
-  apiType: OPT_TRANS_CUSTOMIZE,
-  apiSlug: "desktop-default",
-  url: "http://localhost:17377/v1/chat/completions",
-  key: "",
-  model: "gpt-5.5",
-  useStream: false,
-  useBatchFetch: false,
-  reqHook: DEFAULT_REQUEST_HOOK,
-  resHook: DEFAULT_RESPONSE_HOOK,
-  contextSize: 0,
-  useContext: false,
-  fetchInterval: 0,
-  fetchLimit: 0,
-  httpTimeout: 30000,
-};
-
 // ── 桌面端自建引擎（上游没有的）──────────────────────────────────────────────
 //
 // 有道**不在** kiss-translator 的引擎清单里，所以不能靠 DEFAULT_API_LIST 白拿。
@@ -67,6 +49,8 @@ export const DEFAULT_ENGINE_CONFIG = {
 // 约定：每个自建引擎有自己的 id（不复用 "Custom"），否则在下拉里会和
 // 「自定义接口」撞值（Select 的 value 用的是 apiType）；id → 真实 apiType
 // 的落点在 resolveApiSetting()。
+//
+// ⚠️ 这段必须在 DEFAULT_ENGINE_CONFIG **之前**定义（默认引擎就是它，见下）。
 const YOUDAO_REQUEST_HOOK = `(args) => {
   // 有道的语言码与标准码不同：zh-CN → zh-CHS、zh-TW → zh-CHT，其余同名；
   // 源语言未指定时用 "Auto"（注意首字母大写）。
@@ -109,6 +93,36 @@ export const DESKTOP_API_PRESETS = {
     // 单位是**秒**（同 DEFAULT_HTTP_TIMEOUT 的约定），fetch 层会 ×1000。
     httpTimeout: 30,
   },
+};
+
+// 「自定义接口」（本机 LLM 等）的兜底配置。
+// 必须与默认引擎**解耦**：默认引擎现在是有道，若「自定义接口」继承有道的地址，
+// 就会出现「有道的 URL + OpenAI 的 Hook」这种自相矛盾的组合，一测就报错。
+export const CUSTOM_API_FALLBACK = {
+  url: "http://localhost:17377/v1/chat/completions",
+  model: "gpt-5.5",
+  httpTimeout: 30000,
+};
+
+// ── 默认引擎：有道免费翻译 ───────────────────────────────────────────────────
+//
+// 为什么默认用有道而不是本机 LLM：桌面包装完就该"打开即用"。
+// 早期默认指向 `localhost:17377/v1`（本机 OpenAI 兼容端点），
+// 结果是新用户第一次划词必然看到连接失败 —— 门槛太高，也不像成品。
+// 有道免 Key、免注册、实测 130ms 返回，适合当默认；想用 LLM 的到设置页切「自定义接口」。
+//
+// ⚠️ apiType 用的是**自建引擎 id**（YoudaoFree），不是它内部落到的 "Custom" ——
+//    resolveApiSetting() 负责把 id 翻译成真实 apiType，并带上有道自己的 Hook。
+export const DEFAULT_ENGINE_CONFIG = {
+  ...DESKTOP_API_PRESETS.YoudaoFree,
+  apiType: "YoudaoFree",
+  // 补齐引擎会用到的其余字段（有道预设里没写的那些）
+  key: "",
+  model: "",
+  contextSize: 0,
+  useContext: false,
+  fetchInterval: 0,
+  fetchLimit: 0,
 };
 
 // 内置引擎的默认配置表（数据源是引擎层自带的接口清单 DEFAULT_API_LIST）
@@ -165,6 +179,15 @@ export function resolveApiSetting(input = {}) {
     const presetHook = desktopPreset || {};
     merged.reqHook = userInput.reqHook || presetHook.reqHook || DEFAULT_REQUEST_HOOK;
     merged.resHook = userInput.resHook || presetHook.resHook || DEFAULT_RESPONSE_HOOK;
+
+    // 「用户自己填地址」的那个「自定义接口」要单独兜底：
+    // 它不该继承默认引擎（有道）的 url，否则会拿有道地址配 OpenAI Hook。
+    // 自建引擎（desktopPreset 存在）不在此列 —— 它的 url 来自自己的预设。
+    if (!desktopPreset) {
+      merged.url = userInput.url || CUSTOM_API_FALLBACK.url;
+      merged.model = userInput.model || CUSTOM_API_FALLBACK.model;
+      merged.httpTimeout = userInput.httpTimeout || CUSTOM_API_FALLBACK.httpTimeout;
+    }
   } else {
     delete merged.reqHook;
     delete merged.resHook;

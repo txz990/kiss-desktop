@@ -2,6 +2,7 @@
 // 不依赖真实 LLM，只验证 引擎层 + 自定义 API v2 协议（Request/Response Hook）在 Node 下可用。
 import http from "node:http";
 import { translate } from "../src/engine/index.js";
+import { OPT_TRANS_CUSTOMIZE } from "../src/engine/config/index.js";
 
 const PORT = 17999;
 
@@ -35,6 +36,9 @@ server.listen(PORT, async () => {
   try {
     const res = await translate("Hello world", {
       apiSetting: {
+        // ⚠️ 必须显式写 apiType：默认引擎是有道免费（走它自己的 Hook），
+        // 不写 apiType 会落到有道那条链上，本测试就测不到 OpenAI 兼容通道了。
+        apiType: OPT_TRANS_CUSTOMIZE,
         url: `http://localhost:${PORT}/v1/chat/completions`,
         key: "test",
         model: "mock",

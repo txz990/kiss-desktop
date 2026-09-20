@@ -30,6 +30,8 @@ let grabbing = false;
 let downHandler = null;
 let upHandler = null;
 let started = false;
+// 上一次真正开始取词的时间（冷却闸门用，见 downHandler）
+let lastGrabAt = 0;
 // 当前生效的热键（内存里保存一份，改配置时热更新，不必重启）
 let currentHotkey = null;
 // 修饰键状态自己维护：libuiohook 在 Windows 上不一定填 altKey（见 hotkey.js 说明）
@@ -44,6 +46,9 @@ const mods = createModifierTracker();
  *   原来固定 130ms 太短，是「热键按了但没反应」的常见原因之一。
  * - 恢复阶段**保留用户的富格式**：以前只回写纯文本，用户之前复制的图片/带格式文字
  *   会被静默冲掉。现在先做全格式快照，再整体还原；拿不到快照才退化成写纯文本。
+ * - **注入 Ctrl+C 前必须等修饰键松开**：真人按键是主键先松、修饰键后松，
+ *   不等就会把 Ctrl+C 送成 Ctrl+Alt+C，目标程序不复制 → 划词没反应。
+ *   实现见 win32clip.js 的 simulateCopy()（含强制抬起的兜底）。
  *
  * 全程读剪贴板都走 readClipboardText()，它保证返回 string —— Electron 44 之后
  * readText() 返回 Promise，直接 `.trim()` 会崩（详见文件头坑位 3）。
@@ -52,28 +57,40 @@ async function grabSelection({ timeout = 600, interval = 30 } = {}) {
   // 先备份，再 Ctrl+C：顺序反了就把待抓的内容自己覆盖了
   const snapshot = await snapshotClipboard();
   const prev = await readClipboardText();
-
-  try {
-    simulateCopy();
-  } catch (err) {
-    // 非 Windows / koffi 不可用时不致命，交给调用方处理
-    console.error("[capture] simulateCopy failed:", err.message);
-  }
-
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const deadline = Date.now() + timeout;
-  // 先给目标程序一点时间响应按键
-  await sleep(interval);
 
-  while (Date.now() < deadline) {
-    const cur = await readClipboardText();
-    const got = cur.trim();
-    if (got && got !== prev.trim()) {
+  // 只轮询、不按键：返回这一轮拿到的**新**内容（空串表示没拿到）
+  const pollOnce = async (budget) => {
+    const deadline = Date.now() + budget;
+    await sleep(interval); // 先给目标程序一点时间响应按键
+    while (Date.now() < deadline) {
+      const got = (await readClipboardText()).trim();
+      if (got && got !== prev.trim()) return got;
+      await sleep(interval);
+    }
+    return "";
+  };
+
+  // 最多按 2 次 Ctrl+C。为什么要重试：
+  // 实测发现刚刚被激活的窗口**第一次合成的 Ctrl+C 可能被吞掉**（目标程序还没开始
+  // 处理输入），紧接着重发就能成功。一次不成就放弃的话，用户看到的就是"偶尔没反应"。
+  // 第二次调用时修饰键早已松开，等待为 0，代价很小。
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      // await：内部要等用户松开修饰键，否则 Ctrl+C 会被污染成 Ctrl+Alt+C
+      await simulateCopy(attempt === 0 ? {} : { waitMs: 0 });
+    } catch (err) {
+      // 非 Windows / koffi 不可用时不致命，交给调用方处理
+      console.error("[capture] simulateCopy failed:", err.message);
+      break;
+    }
+
+    const got = await pollOnce(attempt === 0 ? timeout : Math.round(timeout * 0.7));
+    if (got) {
       // 拿到了新内容：把用户原来的剪贴板还原回去，避免污染
       await restoreClipboard(snapshot, prev);
       return got;
     }
-    await sleep(interval);
   }
   return "";
 }
@@ -108,6 +125,11 @@ export function startCapture(onText) {
     const effective = mods.update(e);
     if (grabbing) return;
     if (!matchesHotkey(e, currentHotkey, effective)) return;
+    // 冷却闸门：键盘事件偶发重复投递 / 用户连按，会把同一次取词触发两遍
+    // （表现为浮窗闪两次、多按一次 Ctrl+C）。250ms 足够挡住重复，
+    // 又不影响"快速连按两次取词"的正常用法。
+    if (Date.now() - lastGrabAt < 250) return;
+    lastGrabAt = Date.now();
     grabbing = true;
     try {
       const text = await grabSelection();

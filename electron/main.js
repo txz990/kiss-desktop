@@ -53,6 +53,8 @@ let floatWin = null;
 let settingsWin = null;
 let tray = null;
 let lastClipboard = "";
+// 浮窗最近一次显示的时间：用来忽略"刚显示就被判定失焦"的抖动
+let floatShownAt = 0;
 
 function createFloatWindow() {
   floatWin = new BrowserWindow({
@@ -75,7 +77,14 @@ function createFloatWindow() {
     },
   });
   loadRenderer(floatWin, "floating");
-  floatWin.on("blur", () => floatWin.hide());
+  // 失焦即隐藏（点别处就收起）。但**必须挡住刚显示时的抖动**：
+  // 取词后我们 show() 浮窗，若 Windows 因前台锁没把焦点给它，
+  // 会立刻触发一次 blur → 浮窗刚出现就消失，用户以为"划词没反应"。
+  // 所以显示后 350ms 内的 blur 一律忽略。
+  floatWin.on("blur", () => {
+    if (Date.now() - floatShownAt < 350) return;
+    floatWin.hide();
+  });
   // 浮窗被关闭（点 X / window.close）后置空引用，下次取词会自动重建，
   // 否则后续对已销毁窗口调用 getBounds()/show() 会抛错。
   floatWin.on("closed", () => {
@@ -147,7 +156,9 @@ function positionFloatWindow() {
 function onCaptured(text) {
   if (!floatWin) createFloatWindow();
   positionFloatWindow();
+  floatShownAt = Date.now();
   floatWin.show();
+  floatWin.focus();
   floatWin.webContents.send(IPC.TRANSLATION, { text, loading: true });
   translate(text, { apiSetting: getConfig().engine })
     .then((res) =>
