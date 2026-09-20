@@ -10,7 +10,9 @@
     "build": "vite build",
     "dist": "vite build && electron-builder",
     "pack": "electron-builder --dir",
-    "test": "node scripts/headless-test.mjs"
+    "test": "node scripts/headless-test.mjs && node scripts/test-resolve-setting.mjs",
+    "test:setting": "node scripts/test-resolve-setting.mjs",
+    "probe": "node scripts/probe-engines.mjs"
   },
   "dependencies": {
     "@emotion/react": "^11.11.1",

@@ -15,6 +15,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 const IPC = {
   GET_CONFIG: "get-config",
   SAVE_CONFIG: "save-config",
+  ENGINES: "get-engines",
   TRANSLATE: "translate",
   TRANSLATION: "translation",
   OPEN_SETTINGS: "open-settings",
@@ -24,6 +25,7 @@ const IPC = {
 contextBridge.exposeInMainWorld("desktop", {
   getConfig: () => ipcRenderer.invoke(IPC.GET_CONFIG),
   saveConfig: (cfg) => ipcRenderer.invoke(IPC.SAVE_CONFIG, cfg),
+  getEngines: () => ipcRenderer.invoke(IPC.ENGINES),
   translate: (text, engine) => ipcRenderer.invoke(IPC.TRANSLATE, text, engine),
   openSettings: () => ipcRenderer.send(IPC.OPEN_SETTINGS),
   // 返回「取消订阅」函数，供 React useEffect 卸载时清理。

@@ -15,6 +15,7 @@ import { existsSync } from "fs";
 import { startCapture, stopCapture } from "./capture.js";
 import { getConfig, saveConfig } from "./store.js";
 import { translate } from "../src/engine/index.js";
+import { ENGINES, ENGINE_GROUPS } from "./engines.js";
 import { IPC } from "./ipc.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -172,6 +173,8 @@ function startClipboardWatch() {
 
 function registerIpc() {
   ipcMain.handle(IPC.GET_CONFIG, () => getConfig());
+  // 可选引擎清单（含中文名/分组/是否需要 Key/内置默认值），供设置页渲染下拉。
+  ipcMain.handle(IPC.ENGINES, () => ({ groups: ENGINE_GROUPS, engines: ENGINES }));
   ipcMain.handle(IPC.SAVE_CONFIG, (_e, cfg) => {
     const next = saveConfig(cfg);
     return next;

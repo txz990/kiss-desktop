@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Box,
   Paper,
@@ -9,23 +9,34 @@ import {
   FormControlLabel,
   Switch,
   Divider,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  ListSubheader,
+  Chip,
 } from "@mui/material";
 
-// 设置页：配置自定义 API（OpenAI 兼容端点）、复制即翻译开关、在线测试。
+// 自定义接口的 apiType 常量值（引擎层 OPT_TRANS_CUSTOMIZE === "Custom"）。
+// 渲染进程不 import 引擎层（会拉入 node 依赖），故此处用字面量并保持同步。
+const API_TYPE_CUSTOM = "Custom";
+
+// 设置页：选择翻译引擎（免费引擎优先）、配置参数、复制即翻译、在线测试。
 //
 // ⚠️ 字段名必须与引擎一致：引擎读的是 reqHook / resHook（不是 requestHook / responseHook）。
-// ⚠️ 不要在这里硬写 apiType：引擎侧的值是 "Custom"（OPT_TRANS_CUSTOMIZE 的值），
-//    而字符串 "OPT_TRANS_CUSTOMIZE" 是无效的，会让 genReqFuncs[apiType] 查不到而抛错。
-//    apiType / apiSlug 等引擎内部字段由 electron/store.js 的默认值兜底，UI 不需要也不该覆盖。
+// ⚠️ 只提交本页负责的字段：apiType / apiSlug / httpTimeout 等引擎内部字段
+//    由 electron/store.js + 引擎的 resolveApiSetting 兜底，UI 覆盖成错误值会让翻译报废。
 export default function Settings() {
   const [engine, setEngine] = useState({
-    url: "http://localhost:17377/v1/chat/completions",
+    apiType: API_TYPE_CUSTOM,
+    url: "",
     key: "",
-    model: "gpt-5.5",
+    model: "",
     useStream: false,
     reqHook: "",
     resHook: "",
   });
+  const [catalog, setCatalog] = useState({ groups: [], engines: [] });
   const [copyToTranslate, setCopyToTranslate] = useState(false);
   const [testText, setTestText] = useState("Hello world");
   const [testResult, setTestResult] = useState("");
@@ -33,9 +44,11 @@ export default function Settings() {
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
+    window.desktop.getEngines().then((c) => c && setCatalog(c));
     window.desktop.getConfig().then((cfg) => {
       const e = cfg.engine || {};
       setEngine({
+        apiType: e.apiType || API_TYPE_CUSTOM,
         url: e.url || "",
         key: e.key || "",
         model: e.model || "",
@@ -47,12 +60,35 @@ export default function Settings() {
     });
   }, []);
 
+  const current = useMemo(
+    () => catalog.engines.find((x) => x.apiType === engine.apiType) || null,
+    [catalog, engine.apiType]
+  );
+
+  const isCustom = engine.apiType === API_TYPE_CUSTOM;
+
   const update = (k) => (e) => setEngine({ ...engine, [k]: e.target.value });
+
+  // 切换引擎：用该引擎的内置默认回填（URL/模型）；Key 跨引擎清空以免串用。
+  const changeEngine = (apiType) => {
+    const item = catalog.engines.find((x) => x.apiType === apiType);
+    const p = item?.preset || {};
+    setEngine((prev) => ({
+      apiType,
+      url: p.url || "",
+      key: apiType === prev.apiType ? prev.key : "",
+      model: p.model || "",
+      useStream: false,
+      // Hook 只有自定义接口用到，切到别的引擎时清空
+      reqHook: apiType === API_TYPE_CUSTOM ? prev.reqHook : "",
+      resHook: apiType === API_TYPE_CUSTOM ? prev.resHook : "",
+    }));
+    setTestResult("");
+    setTestErr("");
+  };
 
   const save = async () => {
     setSaved(false);
-    // 只提交本页负责的字段；引擎内部字段（apiType/apiSlug/httpTimeout 等）
-    // 交给 store.js 与 DEFAULT_ENGINE_CONFIG 兜底合并，避免覆盖成错误值。
     await window.desktop.saveConfig({ engine, copyToTranslate });
     setSaved(true);
   };
@@ -61,7 +97,7 @@ export default function Settings() {
     setTestResult("");
     setTestErr("");
     try {
-      // 用当前表单里的配置测试（而非已保存的旧配置），所见即所得。
+      // 用当前表单配置测试（而非已保存的旧配置），所见即所得。
       const res = await window.desktop.translate(testText, engine);
       setTestResult(res.text);
     } catch (e) {
@@ -77,36 +113,101 @@ export default function Settings() {
 
       <Paper sx={{ p: 2 }}>
         <Typography variant="subtitle2" gutterBottom>
-          翻译接口（自定义 API v2 · OpenAI 兼容）
+          翻译引擎
         </Typography>
-        <Stack spacing={1.5}>
+
+        <FormControl fullWidth size="small" sx={{ mt: 0.5 }}>
+          <InputLabel id="engine-label">选择引擎</InputLabel>
+          <Select
+            labelId="engine-label"
+            label="选择引擎"
+            value={engine.apiType}
+            onChange={(e) => changeEngine(e.target.value)}
+          >
+            {catalog.groups.flatMap((g) => [
+              <ListSubheader key={`h-${g.key}`}>{g.label}</ListSubheader>,
+              ...catalog.engines
+                .filter((x) => x.group === g.key)
+                .map((x) => (
+                  <MenuItem key={x.apiType} value={x.apiType}>
+                    {x.label}
+                  </MenuItem>
+                )),
+            ])}
+          </Select>
+        </FormControl>
+
+        {current && (
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1, flexWrap: "wrap" }}>
+            <Chip
+              size="small"
+              color={current.needsKey ? "warning" : "success"}
+              label={current.needsKey ? "需自备 Key" : "无需 Key"}
+            />
+            {current.hint && (
+              <Typography variant="caption" color="text.secondary">
+                {current.hint}
+              </Typography>
+            )}
+          </Stack>
+        )}
+
+        <Stack spacing={1.5} sx={{ mt: 2 }}>
           <TextField label="接口 URL" value={engine.url} onChange={update("url")} fullWidth size="small" />
           <Stack direction="row" spacing={1.5}>
-            <TextField label="API Key" value={engine.key} onChange={update("key")} fullWidth size="small" />
-            <TextField label="模型" value={engine.model} onChange={update("model")} size="small" sx={{ width: 200 }} />
+            <TextField
+              label={current?.needsKey ? "API Key（必填）" : "API Key（可选）"}
+              value={engine.key}
+              onChange={update("key")}
+              fullWidth
+              size="small"
+            />
+            {(current?.needsModel || !!engine.model) && (
+              <TextField
+                label="模型"
+                value={engine.model}
+                onChange={update("model")}
+                size="small"
+                sx={{ width: 220 }}
+              />
+            )}
           </Stack>
+
           <FormControlLabel
-            control={<Switch checked={engine.useStream} onChange={(e) => setEngine({ ...engine, useStream: e.target.checked })} />}
+            control={
+              <Switch
+                checked={engine.useStream}
+                onChange={(e) => setEngine({ ...engine, useStream: e.target.checked })}
+              />
+            }
             label="流式输出"
           />
-          <TextField
-            label="Request Hook（JS）"
-            value={engine.reqHook}
-            onChange={update("reqHook")}
-            fullWidth
-            size="small"
-            multiline
-            minRows={3}
-          />
-          <TextField
-            label="Response Hook（JS）"
-            value={engine.resHook}
-            onChange={update("resHook")}
-            fullWidth
-            size="small"
-            multiline
-            minRows={2}
-          />
+
+          {isCustom && (
+            <>
+              <Typography variant="caption" color="text.secondary">
+                留空则使用内置的 OpenAI 兼容默认 Hook。
+              </Typography>
+              <TextField
+                label="Request Hook（JS）"
+                value={engine.reqHook}
+                onChange={update("reqHook")}
+                fullWidth
+                size="small"
+                multiline
+                minRows={3}
+              />
+              <TextField
+                label="Response Hook（JS）"
+                value={engine.resHook}
+                onChange={update("resHook")}
+                fullWidth
+                size="small"
+                multiline
+                minRows={2}
+              />
+            </>
+          )}
         </Stack>
       </Paper>
 
@@ -129,7 +230,13 @@ export default function Settings() {
           测试
         </Typography>
         <Stack direction="row" spacing={1} alignItems="center">
-          <TextField label="测试文本" value={testText} onChange={(e) => setTestText(e.target.value)} size="small" sx={{ flex: 1 }} />
+          <TextField
+            label="测试文本"
+            value={testText}
+            onChange={(e) => setTestText(e.target.value)}
+            size="small"
+            sx={{ flex: 1 }}
+          />
           <Button variant="outlined" onClick={test}>
             翻译
           </Button>
@@ -151,7 +258,11 @@ export default function Settings() {
         <Button variant="contained" onClick={save}>
           保存配置
         </Button>
-        {saved && <Typography variant="body2" color="success.main" sx={{ alignSelf: "center" }}>已保存</Typography>}
+        {saved && (
+          <Typography variant="body2" color="success.main" sx={{ alignSelf: "center" }}>
+            已保存
+          </Typography>
+        )}
       </Stack>
     </Box>
   );

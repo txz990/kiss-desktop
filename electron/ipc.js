@@ -4,6 +4,7 @@
 export const IPC = {
   GET_CONFIG: "get-config",
   SAVE_CONFIG: "save-config",
+  ENGINES: "get-engines",
   TRANSLATE: "translate",
   TRANSLATION: "translation",
   OPEN_SETTINGS: "open-settings",
