@@ -22,7 +22,9 @@ export const IPC = {
   // 浮窗渲染进程已挂上 onTranslation 监听 —— 主进程收到后才可以安全推内容，
   // 否则消息会丢（新开窗口 / 渲染进程重载时表现为"浮窗一片空白"）。
   FLOATING_READY: "floating-ready",
-  // 渲染进程已把刚收到的内容**提交到 DOM** —— 主进程据此决定何时 show() 才不会闪
-  // （见 main.js onCaptured 里"显示时机"的说明）。
+  // 渲染进程已把刚收到的内容**提交到 DOM** / **真正画出一帧** —— 主进程据此决定
+  // 何时 show() / 何时 setOpacity(1)（见 main.js onCaptured 里"显示时机"的说明）。
   TRANSLATION_PAINTED: "translation-painted",
+  // 浮窗高度自适应：渲染进程量出卡片自然高度，窗口跟着长/缩（去透明后的配套）
+  FLOAT_RESIZE: "float-resize",
 };

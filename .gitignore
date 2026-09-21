@@ -45,3 +45,4 @@ scripts/e2e-slow/*.txt
 # 根目录的一次性验证产物
 .*.flag
 .sizes.txt
+*.err

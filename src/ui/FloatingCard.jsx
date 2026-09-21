@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { Box, Paper, Typography, IconButton, Stack, CircularProgress, Tooltip } from "@mui/material";
 import { ContentCopyIcon, CloseIcon, SettingsIcon, VolumeUpIcon, VolumeOffIcon } from "./icons.jsx";
@@ -18,6 +18,8 @@ export default function FloatingCard() {
   // 否则会先按"没有词典"用 TTS 读一遍、拿到音频后再读一遍 —— 朗读两次。
   const [dictReady, setDictReady] = useState(false);
   const autoPlayedRef = useRef("");
+  // 卡片内容自然高度的测量点（窗口高度自适应的依据，见 main.js FLOAT_RESIZE）
+  const contentRef = useRef(null);
 
   useEffect(() => {
     const off = window.desktop.onTranslation((payload) => {
@@ -55,6 +57,27 @@ export default function FloatingCard() {
       off && off();
       stopSpeaking();
     };
+  }, []);
+
+  // 卡片高度自适应：内容一变就量自然高度报给主进程，窗口跟着长/缩。
+  // 窗口已改为不透明白底（transparent:false），高度贴合内容后视觉上仍是
+  // "一张卡片"，且彻底消灭了透明窗口的幽灵帧问题。
+  useLayoutEffect(() => {
+    const el = contentRef.current;
+    if (!el || !window.desktop?.resizeFloat) return undefined;
+    let last = 0;
+    const report = () => {
+      // +27 = Paper 上下 padding（12×2）+ 顶部绿条 3px
+      const h = Math.ceil(el.offsetHeight) + 27;
+      if (Math.abs(h - last) >= 1) {
+        last = h;
+        window.desktop.resizeFloat({ height: h });
+      }
+    };
+    report();
+    const ro = new ResizeObserver(report);
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
 
   // 发音设置（自动朗读开关 + 单词默认口音）
@@ -214,18 +237,32 @@ export default function FloatingCard() {
   );
 
   return (
-    <Box sx={{ p: 0.5, height: "100%", fontFamily: "system-ui, sans-serif" }}>
+    // 窗口本身是不透明白底（transparent:false + backgroundColor），这里铺满即可；
+    // 高度由主进程按 contentRef 量出的自然高度自适应（FLOAT_RESIZE）。
+    <Box
+      sx={{
+        width: "100%",
+        height: "100%",
+        bgcolor: "#FFFFFF",
+        overflow: "hidden",
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
       <Paper
-        elevation={6}
+        elevation={0}
         sx={{
           p: 1.5,
-          borderRadius: 2,
-          maxHeight: "100%",
-          overflow: "auto",
-          background: "rgba(255,255,255,0.96)",
+          borderRadius: 0,
+          flexGrow: 1,
+          overflowY: "auto",
+          scrollbarGutter: "stable",
+          background: "#FFFFFF",
+          border: "1px solid rgba(15,110,86,0.25)",
           borderTop: "3px solid #0F6E56",
         }}
       >
+        <div ref={contentRef}>
         <Stack
           direction="row"
           justifyContent="space-between"
@@ -312,6 +349,7 @@ export default function FloatingCard() {
             </Tooltip>
           </Stack>
         )}
+        </div>
       </Paper>
     </Box>
   );

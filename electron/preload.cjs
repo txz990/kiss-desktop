@@ -28,6 +28,7 @@ const IPC = {
   DICT_LOOKUP: "dict-lookup",
   FLOATING_READY: "floating-ready",
   TRANSLATION_PAINTED: "translation-painted",
+  FLOAT_RESIZE: "float-resize",
 };
 
 contextBridge.exposeInMainWorld("desktop", {
@@ -55,7 +56,9 @@ contextBridge.exposeInMainWorld("desktop", {
   // 浮窗卡片挂载完成（已注册 onTranslation）→ 通知主进程可以推内容了。
   notifyFloatingReady: () => ipcRenderer.send(IPC.FLOATING_READY),
   // 卡片回执：stage = "dom"（内容已提交到 DOM）/ "painted"（已真正画出一帧）。
-  // 主进程据此决定何时显形浮窗 —— 透明窗口 show 的头几帧是逐层光栅化的，
-  // 只有"painted"回执后才 setOpacity(1)，否则会先亮出"只有文字没有背景"的半成品帧。
+  // 主进程据此决定何时显形浮窗 —— 先透明 show 等首帧画完再 setOpacity(1)，
+  // 保证用户看到的第一眼就是完整卡片。
   ackTranslationPainted: (stage) => ipcRenderer.send(IPC.TRANSLATION_PAINTED, stage || "dom"),
+  // 卡片高度自适应：把量出的内容高度交给主进程调整窗口（窗口已改为不透明白底）
+  resizeFloat: (size) => ipcRenderer.send(IPC.FLOAT_RESIZE, size),
 });

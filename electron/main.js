@@ -97,14 +97,18 @@ function createFloatWindow() {
   floatLog("浮窗创建");
   floatWin = new BrowserWindow({
     width: 380,
-    height: 220,
-    minWidth: 240,
-    minHeight: 120,
+    height: 150, // 初值；渲染进程挂载后按卡片自然高度自动校正（FLOAT_RESIZE）
+    // ⚠️ 不再透明（用户反复看到"幽灵卡"后拍板的：直接消灭，不保留）。
+    // 透明 = Windows 分层窗口 alpha 合成，show 的头几帧 Chromium 逐层光栅化，
+    // 会先亮出"只有文字没有背景"的半成品 —— opaque 窗口从物理上不存在这一类问题。
+    // 视觉无缝靠：窗口白底 + 窗口高度自适应卡片内容（FLOAT_RESIZE）。
+    transparent: false,
+    backgroundColor: "#FFFFFF",
     frame: false,
-    transparent: true,
     alwaysOnTop: true,
     skipTaskbar: true,
-    resizable: true,
+    // 高度随内容自适应后，手动拉伸已无意义，且会和自动校正打架
+    resizable: false,
     show: false,
     webPreferences: {
       // 注意：必须是 .cjs（沙箱化 preload 不能写 import，见 preload.cjs 顶部说明）
@@ -192,6 +196,15 @@ function openSettings() {
   settingsWin.focus();
 }
 
+// ⚠️ 实测（Electron 44 / Windows）：`resizable: false` 的窗口一旦 setBounds/setPosition，
+// isAlwaysOnTop() 会变成 false（Electron 重设几何时把 WS_EX_TOPMOST 弄丢了），
+// 浮窗就会被别的窗口盖住。所以凡是动过浮窗几何，都必须立刻把置顶补回来。
+function floatKeepOnTop() {
+  if (floatWin && !floatWin.isDestroyed() && !floatWin.isAlwaysOnTop()) {
+    floatWin.setAlwaysOnTop(true);
+  }
+}
+
 // 浮窗定位：**只挪位置，绝不回写尺寸**。
 //
 // 坑（抓帧实测）：以前写的是 setBounds({...getBounds()})，把读回来的尺寸原样写回去。
@@ -211,6 +224,7 @@ function positionFloatWindow() {
     Math.min(Math.max(y + 12, workArea.y), workArea.y + workArea.height - h)
   );
   floatWin.setPosition(px, py);
+  floatKeepOnTop(); // setPosition 会弄丢 WS_EX_TOPMOST，立刻补回
 }
 
 /**
@@ -413,6 +427,22 @@ function registerIpc() {
     }
   });
 
+  // ── 浮窗高度自适应（去透明后的配套）──────────────────────────────────────
+  // 渲染进程用 ResizeObserver 量卡片自然高度，窗口跟着长/缩；位置与宽度不动。
+  // 只认浮窗自己的 sender，防止别的窗口乱调尺寸。
+  ipcMain.on(IPC.FLOAT_RESIZE, (_e, size) => {
+    if (!floatWin || floatWin.isDestroyed() || floatWin.webContents !== _e.sender) return;
+    const want = Math.round(Number(size?.height) || 0);
+    if (want < 60) return;
+    const b = floatWin.getBounds();
+    const { workArea } = screen.getDisplayNearestPoint({ x: b.x, y: b.y });
+    const maxH = Math.max(120, workArea.height - 60);
+    const h = Math.min(want, maxH);
+    if (Math.abs(h - b.height) < 1) return;
+    floatWin.setBounds({ x: b.x, y: b.y, width: b.width, height: h });
+    floatKeepOnTop(); // setBounds 会弄丢 WS_EX_TOPMOST，立刻补回
+  });
+
   // ── 热键 ──────────────────────────────────────────────────────────────────
   ipcMain.handle(IPC.HOTKEY_KEYS, () => getKeyList());
   // 检测分两层：先校验格式（必须带修饰键、键位可识别），
@@ -463,7 +493,13 @@ if (!gotSingleInstanceLock) {
   floatLog("检测到已有实例在运行，本进程退出");
   app.quit();
 } else {
-  app.on("second-instance", () => {
+  app.on("second-instance", (_e, argv) => {
+    // 自动化测试也会触发这里（测试进程与正式实例共用 userData 时）；
+    // 带 --e2e 标记的启动不打扰用户，只记录。
+    if (argv && argv.includes("--e2e")) {
+      floatLog("second-instance：e2e 测试进程尝试启动，已忽略");
+      return;
+    }
     floatLog("second-instance：又有人启动了一个实例，已聚焦到本实例的设置窗");
     openSettings();
   });

@@ -34,7 +34,24 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const { app, BrowserWindow, clipboard, screen } = require("electron");
 
-const REAL_USER_DATA = path.join(process.env.APPDATA || "", "kiss-desktop");
+// ⚠️ 两个坑（都真实踩过）：
+//  1) userData 指向正式目录会与用户正在跑的实例**抢单实例锁** → 本进程被踢退出，
+//     而 Remove-Item 删旧结果文件又被 safe-delete 静默拦截 → 读到上一轮的陈旧结果。
+//     → 临时 userData + 拷贝正式配置；启动参数带 --e2e 让正式实例别弹设置窗。
+//  2) （历史）光标不动就测不出位置跳变 —— 每轮已用 SetCursorPos 挪光标。
+const fsMod = require("fs");
+const os = require("os");
+const tmpUserDir = path.join(os.tmpdir(), "kiss-desktop-e2e-app");
+fsMod.mkdirSync(tmpUserDir, { recursive: true });
+try {
+  fsMod.copyFileSync(
+    path.join(process.env.APPDATA || "", "kiss-desktop", "kiss-desktop.json"),
+    path.join(tmpUserDir, "kiss-desktop.json")
+  );
+} catch {
+  /* 没有正式配置就用默认值 */
+}
+const REAL_USER_DATA = tmpUserDir;
 app.setPath("userData", REAL_USER_DATA);
 process.env.KISS_DEBUG_CAPTURE = "1";
 
@@ -81,7 +98,7 @@ async function main() {
 
   const cfg = store.getConfig();
   log(`--- 真实应用浮窗可见性追踪 v3 | Electron ${process.versions.electron} ---`);
-  log(`userData = ${REAL_USER_DATA}`);
+  log(`userData = ${REAL_USER_DATA}（正式配置的拷贝，不抢单实例锁）`);
   log(`配置：热键=${JSON.stringify(cfg.hotkey)} 引擎=${cfg.engine.apiType} 复制即翻译=${cfg.copyToTranslate}`);
 
   const all = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed());

@@ -7,6 +7,7 @@
 // 用法：Remove-Item Env:\ELECTRON_RUN_AS_NODE; node_modules\electron\dist\electron.exe scripts\e2e-frames
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 
 const DIR = path.join(__dirname, "frames");
 fs.mkdirSync(DIR, { recursive: true });
@@ -19,7 +20,22 @@ const log = (s) => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const { app, BrowserWindow, clipboard, screen } = require("electron");
-app.setPath("userData", path.join(process.env.APPDATA || "", "kiss-desktop"));
+// ⚠️ 两个坑（都真实踩过）：
+//  1) userData 指向正式目录会与用户正在跑的实例**抢单实例锁** → 本进程被踢退出，
+//     而 Remove-Item 删旧结果文件又被 safe-delete 静默拦截 → 读到的是上一轮的陈旧结果。
+//     所以这里用**临时 userData + 拷贝正式配置**：既有用户真实配置，又不抢锁。
+//  2) 启动参数带 --e2e，正式实例收到 second-instance 时不弹设置窗打扰用户。
+const tmpUserDir = path.join(os.tmpdir(), "kiss-desktop-e2e-frames");
+fs.mkdirSync(tmpUserDir, { recursive: true });
+try {
+  fs.copyFileSync(
+    path.join(process.env.APPDATA || "", "kiss-desktop", "kiss-desktop.json"),
+    path.join(tmpUserDir, "kiss-desktop.json")
+  );
+} catch {
+  /* 没有正式配置就用默认值 */
+}
+app.setPath("userData", tmpUserDir);
 process.env.KISS_DEBUG_CAPTURE = "1";
 
 const VK_ALT = 0x12;
@@ -56,6 +72,7 @@ async function main() {
 
   const cfg = store.getConfig();
   log(`--- 浮窗抓帧诊断 | Electron ${process.versions.electron} ---`);
+  log(`userData = ${tmpUserDir}（正式配置的拷贝，不抢单实例锁）`);
   log(`热键=${JSON.stringify(cfg.hotkey)} 引擎=${cfg.engine.apiType}`);
 
   const float = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.isAlwaysOnTop());
