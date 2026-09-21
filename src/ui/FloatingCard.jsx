@@ -37,7 +37,17 @@ export default function FloatingCard() {
         setPlaying("");
       });
       stopSpeaking();
-      window.desktop.ackTranslationPainted?.();
+      // 回执①：内容已提交到 DOM（主进程据此知道"可以准备显示窗口了"）
+      window.desktop.ackTranslationPainted?.("dom");
+      // 回执②：等 Chromium **真正画出一帧**（双 rAF）再回执。
+      // ⚠️ 透明窗口 show 的头几帧是逐层光栅化的：实拍（用户录屏逐帧抽帧）显示
+      //    约 130ms 里只有文字、没有卡片背景，网页文字直接透过卡片 —— 用户
+      //    看到的"闪一下/弹两回"就是它。主进程在这段时间让窗口全透明
+      //    （setOpacity(0)），收到本回执才 setOpacity(1) 显形。
+      //    （隐藏的窗口 rAF 不跑，所以必须等主进程 show 之后这里才会触发。）
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => window.desktop.ackTranslationPainted?.("painted"))
+      );
     });
     // 挂载即报名：主进程等这个信号才敢推内容（否则新窗口第一次取词会丢消息 → 空白）
     window.desktop.notifyFloatingReady?.();

@@ -83,8 +83,11 @@ let floatShownAt = 0;
 // 浮窗渲染进程是否已挂上 onTranslation 监听（收到过 FLOATING_READY）。
 // 新建窗口 / 渲染进程重载后必须复位，否则会往没准备好的渲染进程推消息 → 消息丢失 → 浮窗空白。
 let floatReady = false;
-// 正在等待"渲染进程已把内容提交到 DOM"的 resolve（见 waitFloatPainted）
-let floatPaintedResolve = null;
+// 两个回执（见 FloatingCard 的 ackTranslationPainted）：
+//   dom     —— 内容已提交到 DOM（flushSync 之后）
+//   painted —— Chromium 已真正画出一帧（双 rAF 之后）
+let floatDomResolve = null;
+let floatRenderResolve = null;
 
 // 快引擎（有道免费实测 ~150ms）直接把结果等出来再显示，窗口一次到位、零闪烁；
 // 超过这个时间还没结果（本地大模型、慢接口）就先亮"翻译中"，让用户有反馈。
@@ -228,19 +231,25 @@ async function ensureFloatWindow() {
 }
 
 /**
- * 等渲染进程把**刚推送的内容**提交到 DOM（回执：preload 的 ackTranslationPainted）。
+ * 等浮窗渲染进程的某个阶段回执。
+ * @param {"dom"|"painted"} stage
  * 带超时兜底 —— 渲染进程万一不回执，也不能让浮窗永远不显示。
  */
-function waitFloatPainted(timeout = 150) {
+function waitFloatStage(stage, timeout) {
   return new Promise((resolve) => {
     let settled = false;
     const finish = () => {
       if (settled) return;
       settled = true;
-      if (floatPaintedResolve === finish) floatPaintedResolve = null;
+      if (stage === "painted") {
+        if (floatRenderResolve === finish) floatRenderResolve = null;
+      } else if (floatDomResolve === finish) {
+        floatDomResolve = null;
+      }
       resolve();
     };
-    floatPaintedResolve = finish;
+    if (stage === "painted") floatRenderResolve = finish;
+    else floatDomResolve = finish;
     setTimeout(finish, timeout);
   });
 }
@@ -268,7 +277,7 @@ async function showAndTranslate(text) {
   const push = async (payload) => {
     if (win.isDestroyed()) return;
     win.webContents.send(IPC.TRANSLATION, payload);
-    await waitFloatPainted();
+    await waitFloatStage("dom", 150);
     floatLog(`内容已提交到 DOM（${payload.error ? "error" : payload.result ? "result" : "loading"}）`);
   };
 
@@ -285,9 +294,25 @@ async function showAndTranslate(text) {
     }
     positionFloatWindow(); // 位置先定好再显示，避免"出现之后又跳一下"
     floatShownAt = Date.now();
+    // ⚠️ 先全透明地 show，等"真正画出一帧"的回执（双 rAF）再显形。
+    // 实拍证据（用户录屏 60fps 逐帧抽帧）：透明窗口 show 的头 8 帧（约 130ms）
+    // 是逐层光栅化的 —— 只有文字、没有卡片背景，网页文字直接透过卡片，
+    // 然后 58 帧突然变实心。这个"幽灵卡 → 实心卡"就是用户说的「闪一下/弹两回」。
+    // 透明期间 rAF 会跑（隐藏时它不跑），所以回执一定能等到；超时兜底直接显形。
+    win.setOpacity(0);
     win.show();
     win.focus();
-    floatLog(`showFloat（此前可见=${wasVisible}）→ show() + focus()`);
+    const showAt = Date.now();
+    waitFloatStage("painted", 300).then(() => {
+      if (!win.isDestroyed()) {
+        win.setOpacity(1);
+        floatShownAt = Date.now(); // 失焦抖动保护从"真正显形"这一刻起算
+        const waited = Date.now() - showAt;
+        // waited≈16~50ms = 正常（等到了双 rAF 回执）；≈300ms = 渲染进程没回执，
+        // 走了超时兜底（若用户仍见"幽灵卡"，看这行就能定位是哪条路径）
+        floatLog(`首帧回执后显形（等待 ${waited}ms${waited >= 300 ? "，超时兜底" : ""}）`);
+      }
+    });
   };
 
   const pending = translate(text, { apiSetting })
@@ -379,9 +404,13 @@ function registerIpc() {
   ipcMain.on(IPC.FLOATING_READY, () => {
     floatReady = true;
   });
-  // 渲染进程回执"内容已落到 DOM" → 放行 show()
-  ipcMain.on(IPC.TRANSLATION_PAINTED, () => {
-    if (floatPaintedResolve) floatPaintedResolve();
+  // 渲染进程回执（stage: "dom" = 内容已提交到 DOM；"painted" = 已真正画出一帧）
+  ipcMain.on(IPC.TRANSLATION_PAINTED, (_e, stage) => {
+    if (stage === "painted") {
+      if (floatRenderResolve) floatRenderResolve();
+    } else if (floatDomResolve) {
+      floatDomResolve();
+    }
   });
 
   // ── 热键 ──────────────────────────────────────────────────────────────────

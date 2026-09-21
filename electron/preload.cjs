@@ -54,6 +54,8 @@ contextBridge.exposeInMainWorld("desktop", {
   },
   // 浮窗卡片挂载完成（已注册 onTranslation）→ 通知主进程可以推内容了。
   notifyFloatingReady: () => ipcRenderer.send(IPC.FLOATING_READY),
-  // 卡片已把译文提交到 DOM → 主进程收到后才 show()，避免先亮出上一轮的旧译文。
-  ackTranslationPainted: () => ipcRenderer.send(IPC.TRANSLATION_PAINTED),
+  // 卡片回执：stage = "dom"（内容已提交到 DOM）/ "painted"（已真正画出一帧）。
+  // 主进程据此决定何时显形浮窗 —— 透明窗口 show 的头几帧是逐层光栅化的，
+  // 只有"painted"回执后才 setOpacity(1)，否则会先亮出"只有文字没有背景"的半成品帧。
+  ackTranslationPainted: (stage) => ipcRenderer.send(IPC.TRANSLATION_PAINTED, stage || "dom"),
 });
