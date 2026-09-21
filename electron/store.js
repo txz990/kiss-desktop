@@ -15,6 +15,8 @@ const DEFAULTS = {
   copyToTranslate: false,
   // 发音：auto = 翻译完成后自动朗读原文；accent = 单词发音默认口音
   pronounce: { auto: false, accent: "us" },
+  // 开机自启动（Windows 当前用户注册表 Run 键，见 main.js applyAutoLaunch）
+  autoLaunch: false,
 };
 
 export const getConfig = () => {
@@ -24,6 +26,7 @@ export const getConfig = () => {
     hotkey: { ...DEFAULTS.hotkey, ...(cfg.hotkey || {}) },
     copyToTranslate: cfg.copyToTranslate ?? DEFAULTS.copyToTranslate,
     pronounce: { ...DEFAULTS.pronounce, ...(cfg.pronounce || {}) },
+    autoLaunch: cfg.autoLaunch ?? DEFAULTS.autoLaunch,
   };
 };
 
@@ -37,6 +40,8 @@ export const saveConfig = (partial) => {
         ? partial.copyToTranslate
         : current.copyToTranslate,
     pronounce: { ...current.pronounce, ...(partial.pronounce || {}) },
+    autoLaunch:
+      partial.autoLaunch !== undefined ? partial.autoLaunch : current.autoLaunch,
   };
   store.set("config", next);
   return next;

@@ -1,69 +1,51 @@
 # kiss-desktop
 
-桌面划词翻译（Windows）。基于 [kiss-translator](https://github.com/fishjar/kiss-translator) 的**纯引擎层**（`src/apis/trans.js`，零浏览器依赖），套一层 Electron 外壳，实现「在任意本地程序里划词 → 翻译 → 无边框置顶浮窗显示」。
+桌面划词翻译（Windows）。基于 [kiss-translator](https://github.com/fishjar/kiss-translator) 的翻译引擎，在任意本地程序里选中文字，按热键即可翻译，结果以无边框置顶浮窗显示。
 
-## 为什么不是 fork
+![platform](https://img.shields.io/badge/platform-Windows-blue) ![license](https://img.shields.io/badge/license-GPL--3.0-green)
 
-kiss-translator 本体是浏览器扩展，UI/取词/注入全部耦合在页面 DOM 里，桌面端用不上。本项目只复用其**翻译引擎**（39 家内置 API + 自定义 API 协议），其余全新建。上游 License 为 **GPL-3.0**，本项目同步 GPL-3.0，分发即开源。
+## 功能
 
-## 架构分层
+- **全局热键取词**：默认 `Alt+D`（可改），在任何程序里选中文字后按下即翻译，无需切换窗口
+- **剪贴板模式**：可选「复制即翻译」，监听剪贴板变化自动翻译（适合取不到词的程序）
+- **无边框置顶浮窗**：显示原文、译文、单词音标（英/美），支持一键朗读与复制
+- **发音**：英文单词用有道音频（英音/美音），整句或中文用系统 TTS
+- **39+ 翻译引擎**：内置有道、微软、腾讯、火山、Yandex、DeepL 等，开箱即用；支持任意 OpenAI 兼容接口
+- **开机自启动**：可选，开机后在托盘待命
+- **单实例运行**：重复启动自动聚焦已有实例，不会弹出多个窗口
 
-| 层 | 来源 | 处理方式 |
-|---|---|---|
-| 引擎层 `src/engine/apis/trans.js` | kiss-translator（原样复制） | 100% 复用 |
-| UI 层 `src/ui/*` | 新建（React18 + MUI5） | ~70% 复用设计 |
-| 桥接层 `src/engine/config/desktop.js` `electron/store.js` | 新建 | 替换 storage/runtime.sendMessage |
-| 取词层 `electron/capture.js` | 全新 | uiohook-napi + koffi + 剪贴板 |
-| 外壳层 `electron/main.js` | 全新 | 窗口/托盘/热键/IPC |
+## 下载
 
-## 取词原理
+到 [Releases](https://github.com/txz990/kiss-desktop/releases) 页面下载：
 
-全局热键（默认 `Alt+D`）→ 备份剪贴板 → 等修饰键松开 → 模拟 `Ctrl+C`（koffi `keybd_event`）→ 自适应轮询读回选中文字 → 恢复剪贴板 → 调 `handleTranslate` → 浮窗渲染。
+| 文件 | 适合 |
+|---|---|
+| `kiss-desktop-Setup-x.y.z.exe` | 常规安装（推荐），支持开机自启动 |
+| `kiss-desktop-x.y.z-portable.exe` | 免安装单文件，下载即用 |
 
-> ⚠️ 「等修饰键松开」不能省：真人按键是主键先松、修饰键后松，
-> 不等就会把 `Ctrl+C` 送成 `Ctrl+Alt+C`，目标程序不复制 → 表现为「划词没反应」。
+## 使用
 
-进阶可选：koffi 调 Win32 UI Automation `TextPattern` 直接取选中文本（不碰剪贴板）。
+1. 启动后程序驻留**系统托盘**（托盘图标可打开设置或退出）
+2. 在任意程序里选中文字，按 `Alt+D`，浮窗显示翻译结果
+3. 热键、引擎、发音、自启动等都在设置页调整
+
+**翻译引擎**：默认使用有道免费翻译（免 Key、免注册，装完即可用）。想接入自己的模型，在设置页把引擎切换为「自定义接口」，填入任意 OpenAI 兼容端点的地址和 Key 即可。
+
+**取词原理**：程序会模拟一次 `Ctrl+C` 复制选中文字（随后自动还原你的剪贴板），因此目标程序需处于可响应状态；以管理员身份运行的窗口取不到词，请改用剪贴板模式。
 
 ## 开发
 
 ```bash
-npm install          # 或 pnpm install
-npm run dev          # Vite dev + Electron 主进程
-npm run build        # 打包 renderer
-npm run dist         # electron-builder 出 exe
+npm install       # 安装依赖
+npm run dev       # 开发模式（Vite 热更新 + Electron）
+npm test          # 单元测试
+npm run dist      # 打包 exe（输出在 dist/ 目录）
 ```
 
-默认引擎是**有道免费翻译**（`aidemo.youdao.com`，免 Key、免注册、装完即可用）。
-想用自己的模型，到设置页把引擎切成「自定义接口」，填任意 OpenAI 兼容端点（如本机 `http://localhost:17377/v1`，模型 `gpt-5.5`）。
-
-## 浮窗显示时序（为什么不会"闪一下/弹两回"）
-
-取词命中后的顺序是**固定的，别打乱**：
-
-1. `translate()` 先跑，快引擎（有道 ~150ms）直接等出结果；
-2. 结果推给渲染进程，等它 `flushSync` 落到 DOM 并回执（`translation-painted`）；
-3. 这时才 `setPosition` + `show()` —— **窗口第一次亮出来就是完整译文**。
-
-曾经「先 show 再推内容」的写法实测（`scripts/e2e-frames` 抓帧）：show+0ms 显示的是
-**上一轮的旧译文**，show+40ms 塌成转圈，show+160ms 才换成新内容 —— 用户看到的就是
-「翻译框闪一下 / 目视窗口开了两回」。另外两条防线：
-
-- **单实例锁**（`app.requestSingleInstanceLock`）：没有它，重复启动的两个进程都挂全局钩子，
-  按一次热键弹两个浮窗，肉眼同样是"开了两回"。
-- **先隐藏再重显**：Windows 前台锁拒绝 `focus()` 时浮窗不触发 blur、会一直留在屏上；
-  此时若"原地换内容+挪位置"，用户看到的还是两次视觉变化。所以重显前先 `hide()`。
-
-## 排查问题
-
-- 应用把浮窗生命周期写成日志：`%APPDATA%\kiss-desktop\float-events.log`
-  （启动 / 取词命中 / 内容提交 / show / blur，只保留最后 400 行）。
-  「窗口开两回」「闪一下」「按了没反应」这类时序问题，复现一次后直接看它。
-- 取词链路另有控制台诊断开关：`KISS_DEBUG_CAPTURE=1`。
-- `scripts/` 下有 4 个端到端复现脚本（真实 Electron 运行时）：`e2e-capture`（取词）、
-  `e2e-app`（浮窗 show/hide 时序）、`e2e-frames`（逐帧抓图看首帧内容）、
-  `e2e-slow`（慢引擎的"翻译中→结果"链路）。注意它们都要先清 `ELECTRON_RUN_AS_NODE`。
+- 引擎层复用 kiss-translator 的 `src/apis/trans.js`（纯模块，零浏览器依赖），同步上游零冲突
+- 桌面壳层（取词、热键、浮窗、托盘）为全新实现，见 `electron/`
+- 上游 License 为 **GPL-3.0**，本项目同步 GPL-3.0，分发即开源
 
 ## License
 
-GPL-3.0（与上游一致）。
+[GPL-3.0](LICENSE)（与上游 kiss-translator 一致）

@@ -227,6 +227,20 @@ function positionFloatWindow() {
   floatKeepOnTop(); // setPosition 会弄丢 WS_EX_TOPMOST，立刻补回
 }
 
+// ── 开机自启动 ──────────────────────────────────────────────────────────────
+// 用当前用户的注册表 Run 键（app.setLoginItemSettings），不需要管理员权限。
+// 显式传 process.execPath：NSIS 装出来的是安装目录里的 exe，portable 则是运行中的
+// exe —— 都能对上；exe 挪位置后下次启动会重新同步成新路径。
+// ⚠️ 开发模式（electron.exe + --dev）绝不能注册，否则开机拉起的是开发环境的 Electron。
+function applyAutoLaunch(enabled) {
+  if (isDev) return;
+  app.setLoginItemSettings({
+    openAtLogin: !!enabled,
+    path: process.execPath,
+    args: ["--launched"], // 留个标记，便于区分"开机启动"这次运行
+  });
+}
+
 /**
  * 拿到一个**渲染进程已就绪**的浮窗（已挂上 onTranslation 监听）。
  *
@@ -403,6 +417,8 @@ function registerIpc() {
   ipcMain.handle(IPC.ENGINES, () => ({ groups: ENGINE_GROUPS, engines: ENGINES }));
   ipcMain.handle(IPC.SAVE_CONFIG, (_e, cfg) => {
     const next = saveConfig(cfg);
+    // 自启动开关随保存立即生效（写注册表 Run 键）
+    if (cfg && cfg.autoLaunch !== undefined) applyAutoLaunch(next.autoLaunch);
     return next;
   });
   // engineOverride 让设置页用「当前表单值」直接测试，而不必先保存。
@@ -525,6 +541,14 @@ if (!gotSingleInstanceLock) {
     } catch (err) {
       console.error(`[boot] ${name} 初始化失败:`, err?.message || err);
     }
+  }
+
+  // 自启动路径自愈：exe 挪过位置/改过名的话，注册表里还是旧路径。
+  // 每次启动按已保存的开关重写一次，保证指向当前 exe（开发模式跳过）。
+  try {
+    applyAutoLaunch(getConfig().autoLaunch);
+  } catch (err) {
+    console.error("[boot] 自启动同步失败:", err?.message || err);
   }
 
   // 取词放最后：它会挂全局键盘钩子，且失败信息对用户最有价值

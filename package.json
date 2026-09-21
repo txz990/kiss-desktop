@@ -1,6 +1,6 @@
 {
   "name": "kiss-desktop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "桌面划词翻译（Electron） - 复用 kiss-translator 引擎层，全局热键 + 剪贴板取词，无边框置顶浮窗",
   "private": true,
   "type": "module",

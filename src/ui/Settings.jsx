@@ -51,6 +51,7 @@ export default function Settings() {
   const [hotkeyMsg, setHotkeyMsg] = useState("");
   const [capture, setCapture] = useState({ started: false, label: "" });
   const [copyToTranslate, setCopyToTranslate] = useState(false);
+  const [autoLaunch, setAutoLaunch] = useState(false);
   const [pronounce, setPronounce] = useState({ auto: false, accent: "us" });
   const [testText, setTestText] = useState("Hello world");
   const [testResult, setTestResult] = useState("");
@@ -76,6 +77,7 @@ export default function Settings() {
       });
       if (cfg.hotkey) setHotkey(cfg.hotkey);
       setCopyToTranslate(!!cfg.copyToTranslate);
+      setAutoLaunch(!!cfg.autoLaunch);
       if (cfg.pronounce) setPronounce(cfg.pronounce);
     });
   }, []);
@@ -198,7 +200,7 @@ export default function Settings() {
 
   const save = async () => {
     setSaved(false);
-    await window.desktop.saveConfig({ engine, copyToTranslate, pronounce });
+    await window.desktop.saveConfig({ engine, copyToTranslate, pronounce, autoLaunch });
     setSaved(true);
   };
 
@@ -405,6 +407,14 @@ export default function Settings() {
         <Typography variant="caption" color="text.secondary" display="block">
           取词方式：选中文字后按热键，程序会模拟一次 Ctrl+C 取词并还原剪贴板。
           若某些程序取不到词（例如以管理员身份运行的窗口），可改用上面的剪贴板模式。
+        </Typography>
+        <Box sx={{ height: 8 }} />
+        <FormControlLabel
+          control={<Switch checked={autoLaunch} onChange={(e) => setAutoLaunch(e.target.checked)} />}
+          label="开机自动启动"
+        />
+        <Typography variant="caption" color="text.secondary" display="block">
+          勾选后写入当前用户的启动项（无需管理员权限），开机后程序在托盘待命，热键随开随用。
         </Typography>
       </Paper>
 
