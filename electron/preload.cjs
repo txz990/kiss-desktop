@@ -26,6 +26,8 @@ const IPC = {
   CAPTURE_STATUS: "capture-status",
   CAPTURE_SET: "capture-set",
   DICT_LOOKUP: "dict-lookup",
+  FLOATING_READY: "floating-ready",
+  TRANSLATION_PAINTED: "translation-painted",
 };
 
 contextBridge.exposeInMainWorld("desktop", {
@@ -50,4 +52,8 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.on(IPC.TRANSLATION, listener);
     return () => ipcRenderer.removeListener(IPC.TRANSLATION, listener);
   },
+  // 浮窗卡片挂载完成（已注册 onTranslation）→ 通知主进程可以推内容了。
+  notifyFloatingReady: () => ipcRenderer.send(IPC.FLOATING_READY),
+  // 卡片已把译文提交到 DOM → 主进程收到后才 show()，避免先亮出上一轮的旧译文。
+  ackTranslationPainted: () => ipcRenderer.send(IPC.TRANSLATION_PAINTED),
 });

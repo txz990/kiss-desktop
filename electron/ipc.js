@@ -19,4 +19,10 @@ export const IPC = {
   CAPTURE_SET: "capture-set",
   // 词典查询（音标 / 释义 / 发音音频地址）
   DICT_LOOKUP: "dict-lookup",
+  // 浮窗渲染进程已挂上 onTranslation 监听 —— 主进程收到后才可以安全推内容，
+  // 否则消息会丢（新开窗口 / 渲染进程重载时表现为"浮窗一片空白"）。
+  FLOATING_READY: "floating-ready",
+  // 渲染进程已把刚收到的内容**提交到 DOM** —— 主进程据此决定何时 show() 才不会闪
+  // （见 main.js onCaptured 里"显示时机"的说明）。
+  TRANSLATION_PAINTED: "translation-painted",
 };

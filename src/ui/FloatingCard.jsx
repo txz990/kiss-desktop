@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { Box, Paper, Typography, IconButton, Stack, CircularProgress, Tooltip } from "@mui/material";
 import { ContentCopyIcon, CloseIcon, SettingsIcon, VolumeUpIcon, VolumeOffIcon } from "./icons.jsx";
 import { playAudio, speak, stopSpeaking, guessLang } from "./speech.js";
@@ -20,16 +21,26 @@ export default function FloatingCard() {
 
   useEffect(() => {
     const off = window.desktop.onTranslation((payload) => {
-      setState({
-        text: payload.text || "",
-        result: payload.result || "",
-        from: payload.from || "",
-        loading: !!payload.loading,
-        error: payload.error || "",
+      // ⚠️ 必须用 flushSync 让这次更新**同步**落到 DOM，再回执给主进程。
+      // 主进程要收到回执才 show() 浮窗；不回执的旧写法是"先 show 再 setState"，
+      // 窗口第一眼看到的是**上一轮的旧译文**，几十毫秒后才跳成新内容 ——
+      // 用户的原话就是「翻译框会闪一下 / 目视窗口开了两回」。
+      // （抓帧实测：show+0 是旧译文 → show+40ms 变转圈 → show+160ms 才是新译文。）
+      flushSync(() => {
+        setState({
+          text: payload.text || "",
+          result: payload.result || "",
+          from: payload.from || "",
+          loading: !!payload.loading,
+          error: payload.error || "",
+        });
+        setPlaying("");
       });
-      setPlaying("");
       stopSpeaking();
+      window.desktop.ackTranslationPainted?.();
     });
+    // 挂载即报名：主进程等这个信号才敢推内容（否则新窗口第一次取词会丢消息 → 空白）
+    window.desktop.notifyFloatingReady?.();
     return () => {
       off && off();
       stopSpeaking();

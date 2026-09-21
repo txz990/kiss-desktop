@@ -152,9 +152,15 @@ async function main() {
   const capture = await import("../../electron/capture.js");
   let captured = null;
   let capturedAt = 0;
+  // ⚠️ 必须数"回调被调了几次"：调用两次 = 浮窗 show() 两次 = 用户看到的"窗口开了两回"。
+  //    只记录最后一次的值是看不出这个 bug 的。
+  let callbacks = 0;
+  const callbackTimes = [];
   const started = capture.startCapture((text) => {
     captured = text;
     capturedAt = Date.now();
+    callbacks += 1;
+    callbackTimes.push(Date.now());
   });
   check("startCapture 返回 ok", !!started.ok, JSON.stringify(started));
   await sleep(500);
@@ -176,33 +182,53 @@ async function main() {
   };
 
   const scenarios = [
-    { name: "Alt+D 瞬时", vks: [VK_ALT, 0x44], hk: { alt: 1, ctrl: 0, keycode: 32 }, hold: 0 },
-    { name: "Alt+D 按住 400ms（真人节奏）", vks: [VK_ALT, 0x44], hk: { alt: 1, ctrl: 0, keycode: 32 }, hold: 400 },
-    { name: "Ctrl+Alt+D 瞬时", vks: [VK_CTRL, VK_ALT, 0x44], hk: { alt: 1, ctrl: 1, keycode: 32 }, hold: 0 },
-    { name: "Ctrl+Alt+D 按住 400ms（用户当前设置）", vks: [VK_CTRL, VK_ALT, 0x44], hk: { alt: 1, ctrl: 1, keycode: 32 }, hold: 400 },
+    { name: "Alt+D 瞬时", vks: [VK_ALT], hk: { alt: 1, ctrl: 0, keycode: 32 }, hold: 0, repeats: 0, expectCalls: 1 },
+    { name: "Alt+D 按住 400ms（真人节奏）", vks: [VK_ALT], hk: { alt: 1, ctrl: 0, keycode: 32 }, hold: 400, repeats: 0, expectCalls: 1 },
+    { name: "Ctrl+Alt+D 瞬时", vks: [VK_CTRL, VK_ALT], hk: { alt: 1, ctrl: 1, keycode: 32 }, hold: 0, repeats: 0, expectCalls: 1 },
+    { name: "Ctrl+Alt+D 按住 400ms（用户当前设置）", vks: [VK_CTRL, VK_ALT], hk: { alt: 1, ctrl: 1, keycode: 32 }, hold: 400, repeats: 0, expectCalls: 1 },
+    // Windows 的键盘自动重复：按住主键不放时系统会持续补发 keydown（首次延迟 ~500ms，之后约 30ms 一次）。
+    // 每次都长得和"新按了一下"一模一样 —— 如果不区分"同一次按下"，取词就会被触发 N 次，
+    // 浮窗跟着 show() N 次，用户看到的就是「窗口一闪一闪/开了两回」。
+    { name: "Ctrl+Alt+D 长按自动重复（模拟 Windows 键盘重复）", vks: [VK_CTRL, VK_ALT], hk: { alt: 1, ctrl: 1, keycode: 32 }, hold: 0, repeats: 8, expectCalls: 1 },
   ];
 
   for (const [i, sc] of scenarios.entries()) {
     captured = null;
     capturedAt = 0;
+    callbacks = 0;
+    callbackTimes.length = 0;
     await select(SAMPLE);
     await clipboard.writeText(`MARKER-${i}`);
     capture.setHotkey({ ...sc.hk, shift: false, meta: false });
 
     const t0 = Date.now();
-    const sampler = sampleClipboard(2600);
+    const sampler = sampleClipboard(3200);
     await sleep(40);
     for (const vk of sc.vks) down(vk);
+    down(0x44); // 按下主键
     up(0x44); // 主键先松
+    if (sc.repeats) {
+      // 模拟自动重复：主键保持按住，系统补发 N 次 keydown
+      for (let r = 0; r < sc.repeats; r += 1) {
+        await sleep(60);
+        down(0x44);
+      }
+      up(0x44);
+    }
     await sleep(sc.hold);
     for (const vk of [...sc.vks].reverse()) up(vk); // 修饰键后松
 
-    for (let k = 0; k < 30 && !captured; k += 1) await sleep(150);
-    await sleep(200);
+    for (let k = 0; k < 40 && !captured; k += 1) await sleep(150);
+    await sleep(400);
     const seq = await sampler;
 
-    check(sc.name, captured === SAMPLE, `captured=${JSON.stringify(captured)}`);
-    info(`  [${sc.name}] 回调@${capturedAt ? capturedAt - t0 : "-"}ms  剪贴板轨迹: ${seq}`);
+    const rel = callbackTimes.map((t) => `${t - t0}ms`).join(",");
+    check(
+      sc.name,
+      captured === SAMPLE && callbacks === sc.expectCalls,
+      `captured=${JSON.stringify(captured)} 回调次数=${callbacks}(期望${sc.expectCalls}) 时点=[${rel}]`
+    );
+    info(`  [${sc.name}] 剪贴板轨迹: ${seq}`);
   }
 
   capture.stopCapture();

@@ -10,7 +10,7 @@ import {
 } from "electron";
 import * as path from "path";
 import { fileURLToPath } from "url";
-import { existsSync } from "fs";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import { startCapture, stopCapture, setHotkey, getCurrentHotkey, isCaptureStarted } from "./capture.js";
 // Electron 44 起 clipboard 全部异步（readText() 返回 Promise），统一走适配层，
 // 不要再直接用 clipboard.readText() —— 会把 Promise 当字符串用而崩溃。
@@ -49,14 +49,49 @@ async function loadRenderer(win, view) {
   return win.loadURL(url);
 }
 
+// ── 浮窗事件日志：排查「窗口开了两回 / 闪一下」这类**时序**问题的硬证据 ─────────
+// 控制台日志在打包后看不见，所以落到 userData/float-events.log（只保留最后 400 行）。
+// 用户复现一次，这个文件里就是每一次 创建/取词/show/hide/blur 的精确时刻，
+// 谁先谁后、隔了多少毫秒一目了然 —— 不用再靠猜。
+let floatLogPath = "";
+function floatLog(msg) {
+  try {
+    if (!floatLogPath) {
+      floatLogPath = path.join(app.getPath("userData"), "float-events.log");
+    }
+    let content = "";
+    try {
+      content = readFileSync(floatLogPath, "utf8");
+    } catch {
+      /* 首次还没有这个文件 */
+    }
+    const stamp = new Date().toISOString().slice(11, 23);
+    const lines = content ? content.split("\n") : [];
+    lines.push(`${stamp} ${msg}`);
+    writeFileSync(floatLogPath, lines.slice(-400).join("\n"), "utf8");
+  } catch {
+    /* 日志失败绝不能影响功能 */
+  }
+}
+
 let floatWin = null;
 let settingsWin = null;
 let tray = null;
 let lastClipboard = "";
 // 浮窗最近一次显示的时间：用来忽略"刚显示就被判定失焦"的抖动
 let floatShownAt = 0;
+// 浮窗渲染进程是否已挂上 onTranslation 监听（收到过 FLOATING_READY）。
+// 新建窗口 / 渲染进程重载后必须复位，否则会往没准备好的渲染进程推消息 → 消息丢失 → 浮窗空白。
+let floatReady = false;
+// 正在等待"渲染进程已把内容提交到 DOM"的 resolve（见 waitFloatPainted）
+let floatPaintedResolve = null;
+
+// 快引擎（有道免费实测 ~150ms）直接把结果等出来再显示，窗口一次到位、零闪烁；
+// 超过这个时间还没结果（本地大模型、慢接口）就先亮"翻译中"，让用户有反馈。
+const FAST_RESULT_MS = 350;
 
 function createFloatWindow() {
+  floatLog("浮窗创建");
   floatWin = new BrowserWindow({
     width: 380,
     height: 220,
@@ -76,19 +111,28 @@ function createFloatWindow() {
       sandbox: true,
     },
   });
+  // 渲染进程开始加载 → 之前的"已就绪"作废，等 FloatingCard 重新报名
+  floatWin.webContents.on("did-start-loading", () => {
+    floatReady = false;
+  });
   loadRenderer(floatWin, "floating");
   // 失焦即隐藏（点别处就收起）。但**必须挡住刚显示时的抖动**：
   // 取词后我们 show() 浮窗，若 Windows 因前台锁没把焦点给它，
   // 会立刻触发一次 blur → 浮窗刚出现就消失，用户以为"划词没反应"。
   // 所以显示后 350ms 内的 blur 一律忽略。
   floatWin.on("blur", () => {
-    if (Date.now() - floatShownAt < 350) return;
+    const since = Date.now() - floatShownAt;
+    const ignored = since < 350;
+    floatLog(`blur（距上次显示 ${since}ms）→ ${ignored ? "忽略" : "隐藏浮窗"}`);
+    if (ignored) return;
     floatWin.hide();
   });
   // 浮窗被关闭（点 X / window.close）后置空引用，下次取词会自动重建，
   // 否则后续对已销毁窗口调用 getBounds()/show() 会抛错。
   floatWin.on("closed", () => {
+    floatLog("浮窗销毁（closed）");
     floatWin = null;
+    floatReady = false;
   });
 }
 
@@ -145,35 +189,150 @@ function openSettings() {
   settingsWin.focus();
 }
 
+// 浮窗定位：**只挪位置，绝不回写尺寸**。
+//
+// 坑（抓帧实测）：以前写的是 setBounds({...getBounds()})，把读回来的尺寸原样写回去。
+// 在 150% DPI 下这个"读-写"往返每次都会被系统向上取整 1px，窗口一轮长一像素
+// （实测高度 220 → 221 → 222 → 223），而且每次都触发一次 resize → 整窗重新合成，
+// 是"闪一下"的帮凶。改用 setPosition 后两个问题一起消失。
+// 顺手夹到光标所在屏幕的工作区内，避免贴边时半个浮窗跑到屏幕外。
 function positionFloatWindow() {
-  if (!floatWin) return;
+  if (!floatWin || floatWin.isDestroyed()) return;
   const { x, y } = screen.getCursorScreenPoint();
-  const { width, height } = floatWin.getBounds();
-  floatWin.setBounds({ x: x + 12, y: y + 12, width, height });
+  const { workArea } = screen.getDisplayNearestPoint({ x, y });
+  const [w, h] = floatWin.getSize();
+  const px = Math.round(
+    Math.min(Math.max(x + 12, workArea.x), workArea.x + workArea.width - w)
+  );
+  const py = Math.round(
+    Math.min(Math.max(y + 12, workArea.y), workArea.y + workArea.height - h)
+  );
+  floatWin.setPosition(px, py);
 }
 
-// 命中热键并取到文字后：翻译 → 显示浮窗。
+/**
+ * 拿到一个**渲染进程已就绪**的浮窗（已挂上 onTranslation 监听）。
+ *
+ * 为什么需要：新建窗口或渲染进程重载后，webContents.send() 会**丢消息**
+ * （没人监听），表现就是"浮窗亮出来一片空白"。所以推内容前必须等 FLOATING_READY。
+ */
+async function ensureFloatWindow() {
+  if (floatWin && !floatWin.isDestroyed() && floatReady) return floatWin;
+  if (!floatWin || floatWin.isDestroyed()) createFloatWindow();
+  const win = floatWin;
+  const deadline = Date.now() + 2000;
+  while (win && !win.isDestroyed() && !floatReady && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  return win;
+}
+
+/**
+ * 等渲染进程把**刚推送的内容**提交到 DOM（回执：preload 的 ackTranslationPainted）。
+ * 带超时兜底 —— 渲染进程万一不回执，也不能让浮窗永远不显示。
+ */
+function waitFloatPainted(timeout = 150) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (floatPaintedResolve === finish) floatPaintedResolve = null;
+      resolve();
+    };
+    floatPaintedResolve = finish;
+    setTimeout(finish, timeout);
+  });
+}
+
+/**
+ * 命中热键并取到文字后：翻译 → 显示浮窗。
+ *
+ * ── 这里唯一讲究的是**显示的时机**（踩过的坑，别再改回"先 show 再推内容"）──
+ * 旧写法把 `show()` 和 `send(loading)` 挤在同一个 tick：窗口先亮出来，里面装的
+ * 还是**上一轮的旧译文**，几十毫秒后才换成新内容。抓帧实证（scripts/e2e-frames）：
+ *   show+0ms   → 上一轮的"beta second capture / 秒捕获"
+ *   show+40ms  → 塌成"只有原文 + 转圈"
+ *   show+160ms → 才是本轮结果"gamma third capture / 第三次捕获"
+ * 用户看到的就是「翻译框会闪一下，才正常显示翻译。也就是目视窗口开了 2 回」。
+ *
+ * 正解：**先把内容推进渲染进程、等它落到 DOM，再 show()**。窗口第一眼就是新内容。
+ * 对快引擎（有道免费 ~150ms）干脆连"翻译中"都不显示，一次到位。
+ */
+async function showAndTranslate(text) {
+  floatLog(`取词命中：${String(text).slice(0, 24)}`);
+  const win = await ensureFloatWindow();
+  if (!win || win.isDestroyed()) return;
+  const apiSetting = getConfig().engine;
+
+  const push = async (payload) => {
+    if (win.isDestroyed()) return;
+    win.webContents.send(IPC.TRANSLATION, payload);
+    await waitFloatPainted();
+    floatLog(`内容已提交到 DOM（${payload.error ? "error" : payload.result ? "result" : "loading"}）`);
+  };
+
+  const showFloat = () => {
+    if (win.isDestroyed()) return;
+    // ⚠️ 浮窗如果**还挂在屏上**（Windows 前台锁拒绝 focus() 时它不会触发 blur、
+    //    也就不会被收起），绝不能"原地换内容 + 挪位置"—— 用户会先看到旧译文换新、
+    //    再看到窗口跳到新位置，两次视觉变化，观感就是「窗口又弹了一次 / 一闪一下」。
+    //    所以先收起来，再按新内容、新位置一次性亮出 —— 用户眼里只有一次弹出。
+    const wasVisible = win.isVisible();
+    if (wasVisible) {
+      floatLog("浮窗此前仍可见 → 先隐藏再重显（避免原地换内容+跳位置被看成两次弹出）");
+      win.hide();
+    }
+    positionFloatWindow(); // 位置先定好再显示，避免"出现之后又跳一下"
+    floatShownAt = Date.now();
+    win.show();
+    win.focus();
+    floatLog(`showFloat（此前可见=${wasVisible}）→ show() + focus()`);
+  };
+
+  const pending = translate(text, { apiSetting })
+    .then((res) => {
+      const out = { text, result: res.text, from: res.from };
+      // ⚠️ 引擎层对请求失败是**静默吞掉**的：接口 404 / 超时 / 被拒都不抛错，
+      //    而是resolve 出 text:""。不在这里补错误提示的话，浮窗会弹出一张
+      //    「只有原文、没有译文也没有报错」的空卡片，用户只会觉得"这窗口是坏的"。
+      if (!res.text || !String(res.text).trim()) {
+        delete out.result;
+        out.error = "翻译返回为空（接口无响应或请求被拒）";
+      }
+      return out;
+    })
+    .catch((err) => ({ text, error: err?.message || String(err) }));
+
+  let fastTimer = null;
+  const fast = await Promise.race([
+    pending,
+    new Promise((resolve) => {
+      fastTimer = setTimeout(() => resolve(null), FAST_RESULT_MS);
+    }),
+  ]);
+  clearTimeout(fastTimer);
+
+  if (fast) {
+    // 快：内容就位后再显示 —— 窗口第一次亮出来就是译文，全程只有一次呈现
+    floatLog("快引擎路径：结果已就绪，一次性显示");
+    await push(fast);
+    showFloat();
+    return;
+  }
+
+  // 慢：先给"翻译中"的反馈，结果到了再更新（此时窗口已可见，只换内容、不再重新定位）
+  floatLog(`慢引擎路径：超过 ${FAST_RESULT_MS}ms 仍无结果，先显示"翻译中"`);
+  await push({ text, loading: true });
+  showFloat();
+  await push(await pending);
+}
+
+// 对外保持同步签名（取词层、剪贴板监听都直接当回调用），内部异步并自己兜住异常。
 function onCaptured(text) {
-  if (!floatWin) createFloatWindow();
-  positionFloatWindow();
-  floatShownAt = Date.now();
-  floatWin.show();
-  floatWin.focus();
-  floatWin.webContents.send(IPC.TRANSLATION, { text, loading: true });
-  translate(text, { apiSetting: getConfig().engine })
-    .then((res) =>
-      floatWin.webContents.send(IPC.TRANSLATION, {
-        text,
-        result: res.text,
-        from: res.from,
-      })
-    )
-    .catch((err) =>
-      floatWin.webContents.send(IPC.TRANSLATION, {
-        text,
-        error: err.message || String(err),
-      })
-    );
+  showAndTranslate(text).catch((err) => {
+    console.error("[float] 显示浮窗失败:", err?.message || err);
+  });
 }
 
 // 复制即翻译模式：轮询剪贴板变化。
@@ -214,6 +373,16 @@ function registerIpc() {
     return await translate(text, { apiSetting });
   });
   ipcMain.on(IPC.OPEN_SETTINGS, () => openSettings());
+
+  // ── 浮窗显示时序（防"闪一下/开了两回"，见 onCaptured 说明）────────────────
+  // 渲染进程报名"已就绪" → 才允许推内容
+  ipcMain.on(IPC.FLOATING_READY, () => {
+    floatReady = true;
+  });
+  // 渲染进程回执"内容已落到 DOM" → 放行 show()
+  ipcMain.on(IPC.TRANSLATION_PAINTED, () => {
+    if (floatPaintedResolve) floatPaintedResolve();
+  });
 
   // ── 热键 ──────────────────────────────────────────────────────────────────
   ipcMain.handle(IPC.HOTKEY_KEYS, () => getKeyList());
@@ -256,7 +425,22 @@ function registerIpc() {
   });
 }
 
-app.whenReady().then(() => {
+// ── 单实例锁 ──────────────────────────────────────────────────────────────────
+// 托盘应用极易被重复启动（再点一次 exe / 再跑一次 npm run dev / 旧实例没退干净）。
+// 没有这把锁时**两个进程都挂着全局键盘钩子**：按一次热键，两个浮窗一起弹出来 ——
+// 用户看到的就是「弹出两次窗口 / 一闪一下」，而且复现环境里永远只有单实例，查不到。
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  floatLog("检测到已有实例在运行，本进程退出");
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    floatLog("second-instance：又有人启动了一个实例，已聚焦到本实例的设置窗");
+    openSettings();
+  });
+
+  app.whenReady().then(() => {
+    floatLog("应用启动");
   // 托盘驱动的后台翻译工具，不需要 Electron 默认菜单栏（File/Edit/View/Window）。
   Menu.setApplicationMenu(null);
 
@@ -282,10 +466,13 @@ app.whenReady().then(() => {
   const result = startCapture(onCaptured);
   if (result.ok) {
     console.log(`[boot] 取词已就绪，热键 ${describeHotkey(getConfig().hotkey)}`);
+    floatLog(`取词钩子就绪，热键 ${describeHotkey(getConfig().hotkey)}`);
   } else {
     console.error("[boot] 取词启动失败：", result.error);
+    floatLog(`取词钩子启动失败：${result.error}`);
   }
-});
+  });
+}
 
 // 菜单已移除，保留 F12 作为开发者工具的唯一入口，便于排查问题。
 app.on("browser-window-created", (_e, win) => {

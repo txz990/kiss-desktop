@@ -32,6 +32,15 @@ let upHandler = null;
 let started = false;
 // 上一次真正开始取词的时间（冷却闸门用，见 downHandler）
 let lastGrabAt = 0;
+
+// 诊断开关：KISS_DEBUG_CAPTURE=1 时打印取词链路的关键节点。
+// 排查"窗口闪两下 / 按了没反应 / 偶尔失效"这类**时序**问题，比读代码快得多：
+// 一次取词应该只有一行 "hotkey matched"，出现两行就说明重复触发。
+const DEBUG = process.env.KISS_DEBUG_CAPTURE === "1";
+const dbg = (...args) => {
+  if (DEBUG) console.log(`[capture ${new Date().toISOString().slice(17, 23)}]`, ...args);
+};
+const brief = (t) => JSON.stringify(String(t || "").slice(0, 24));
 // 当前生效的热键（内存里保存一份，改配置时热更新，不必重启）
 let currentHotkey = null;
 // 修饰键状态自己维护：libuiohook 在 Windows 上不一定填 altKey（见 hotkey.js 说明）
@@ -58,6 +67,7 @@ async function grabSelection({ timeout = 600, interval = 30 } = {}) {
   const snapshot = await snapshotClipboard();
   const prev = await readClipboardText();
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  dbg("grab 开始 prev=" + brief(prev));
 
   // 只轮询、不按键：返回这一轮拿到的**新**内容（空串表示没拿到）
   const pollOnce = async (budget) => {
@@ -78,7 +88,8 @@ async function grabSelection({ timeout = 600, interval = 30 } = {}) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       // await：内部要等用户松开修饰键，否则 Ctrl+C 会被污染成 Ctrl+Alt+C
-      await simulateCopy(attempt === 0 ? {} : { waitMs: 0 });
+      const sim = await simulateCopy(attempt === 0 ? {} : { waitMs: 0 });
+      dbg(`第 ${attempt + 1} 次 Ctrl+C（等待 ${sim.waited}ms，强制抬起 [${sim.forced}]）`);
     } catch (err) {
       // 非 Windows / koffi 不可用时不致命，交给调用方处理
       console.error("[capture] simulateCopy failed:", err.message);
@@ -86,12 +97,14 @@ async function grabSelection({ timeout = 600, interval = 30 } = {}) {
     }
 
     const got = await pollOnce(attempt === 0 ? timeout : Math.round(timeout * 0.7));
+    dbg(`第 ${attempt + 1} 次轮询结果：${got ? "拿到 " + brief(got) : "没拿到"}`);
     if (got) {
       // 拿到了新内容：把用户原来的剪贴板还原回去，避免污染
       await restoreClipboard(snapshot, prev);
       return got;
     }
   }
+  dbg("两次都没拿到，放弃");
   return "";
 }
 
@@ -123,17 +136,27 @@ export function startCapture(onText) {
     if (e.type !== EventType.EVENT_KEY_PRESSED && e.type !== undefined) return;
     // 每个事件都先更新修饰键状态，再判定（修饰键自己按下时也要更新）
     const effective = mods.update(e);
-    if (grabbing) return;
+    if (grabbing) {
+      dbg(`命中热键但已在取词中，忽略（keycode ${e.keycode}）`);
+      return;
+    }
     if (!matchesHotkey(e, currentHotkey, effective)) return;
     // 冷却闸门：键盘事件偶发重复投递 / 用户连按，会把同一次取词触发两遍
     // （表现为浮窗闪两次、多按一次 Ctrl+C）。250ms 足够挡住重复，
     // 又不影响"快速连按两次取词"的正常用法。
-    if (Date.now() - lastGrabAt < 250) return;
+    if (Date.now() - lastGrabAt < 250) {
+      dbg(`命中热键但在冷却期内，忽略（距上次 ${Date.now() - lastGrabAt}ms）`);
+      return;
+    }
     lastGrabAt = Date.now();
+    dbg(`命中热键，开始取词（keycode ${e.keycode}）`);
     grabbing = true;
     try {
       const text = await grabSelection();
-      if (text) onText(text);
+      if (text) {
+        dbg(`取词成功，回调 onText：${brief(text)}`);
+        onText(text);
+      }
     } catch (err) {
       console.error("[capture] grab failed:", err?.message || err);
     } finally {
